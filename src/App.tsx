@@ -20,6 +20,7 @@ interface PromotionRequest {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const PROMOTION_ORDER: PieceType[] = ["q", "r", "b", "n"];
+const MOVE_SOUND_SRC = "/sounds/chess-move.mp3";
 
 const PIECE_VALUES: Record<PieceType, number> = {
   p: 1,
@@ -357,6 +358,7 @@ export default function App() {
   const aiManagerRef = useRef<StockfishManager | null>(null);
   const aiRequestTokenRef = useRef(0);
   const aiPreparedGameRef = useRef<number | null>(null);
+  const moveSoundRef = useRef<HTMLAudioElement | null>(null);
   const [, setVersion] = useState(0);
   const [gameSession, setGameSession] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
@@ -403,10 +405,30 @@ export default function App() {
 
   const refresh = () => setVersion((v) => v + 1);
 
+  const playMoveSound = () => {
+    const sound = moveSoundRef.current ?? new Audio(MOVE_SOUND_SRC);
+    if (moveSoundRef.current === null) {
+      sound.preload = "auto";
+      moveSoundRef.current = sound;
+    }
+
+    sound.currentTime = 0;
+    const playPromise = sound.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      void playPromise.catch(() => {});
+    }
+  };
+
   const clearSelection = () => {
     setSelectedSquare(null);
     setDragSource(null);
     setPromotionRequest(null);
+  };
+
+  const finalizeMove = () => {
+    clearSelection();
+    playMoveSound();
+    refresh();
   };
 
   const cancelAI = (dispose = false) => {
@@ -443,14 +465,14 @@ export default function App() {
 
     const moved = game.move(from, to);
     if (moved) {
-      clearSelection();
-      refresh();
+      finalizeMove();
     }
     return moved;
   };
 
   useEffect(() => {
     return () => {
+      moveSoundRef.current?.pause();
       aiManagerRef.current?.dispose();
     };
   }, []);
@@ -532,8 +554,7 @@ export default function App() {
           throw new Error(`AI suggested an invalid move: ${bestMove}`);
         }
 
-        clearSelection();
-        refresh();
+        finalizeMove();
       } catch (error) {
         if (!cancelled && aiRequestTokenRef.current === requestToken) {
           setAiError(errorMessage(error));
@@ -599,8 +620,7 @@ export default function App() {
     if (!promotionRequest) return;
     const moved = game.move(promotionRequest.from, promotionRequest.to, promotion);
     if (moved) {
-      clearSelection();
-      refresh();
+      finalizeMove();
       return;
     }
     setPromotionRequest(null);
