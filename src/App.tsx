@@ -60,6 +60,10 @@ function formatReason(reason: string): string {
   return reason.replace(/-/g, " ");
 }
 
+function formatClaimableDraws(reasons: GameStatus["claimableDraws"]): string {
+  return reasons.map((reason) => formatReason(reason)).join(" or ");
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 interface PlayerBarProps {
@@ -103,10 +107,11 @@ function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, 
 interface GameInfoProps {
   state: ChessState;
   status: GameStatus;
+  onClaimDraw: () => void;
   onReset: () => void;
 }
 
-function GameInfo({ state, status, onReset }: GameInfoProps) {
+function GameInfo({ state, status, onClaimDraw, onReset }: GameInfoProps) {
   if (status.result) {
     return (
       <div className="card result-card">
@@ -144,6 +149,14 @@ function GameInfo({ state, status, onReset }: GameInfoProps) {
           <span className="stat-value">{state.halfmoveClock}</span>
         </div>
       </div>
+      {status.claimableDraws.length > 0 && (
+        <div className="claim-draw-row">
+          <p className="result-reason">Draw available by claim: {formatClaimableDraws(status.claimableDraws)}</p>
+          <button type="button" className="btn btn-ghost" onClick={onClaimDraw}>
+            Claim draw
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -322,6 +335,13 @@ export default function App() {
     }
   };
 
+  const handleClaimDraw = () => {
+    if (game.claimDraw()) {
+      clearSelection();
+      refresh();
+    }
+  };
+
   return (
     <div className="app-shell">
       {/* Header */}
@@ -379,7 +399,7 @@ export default function App() {
 
         {/* Sidebar */}
         <aside className="sidebar">
-          <GameInfo state={state} status={status} onReset={handleReset} />
+          <GameInfo state={state} status={status} onClaimDraw={handleClaimDraw} onReset={handleReset} />
           <MoveList moves={moveHistory} />
         </aside>
       </div>

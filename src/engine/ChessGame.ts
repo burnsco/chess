@@ -15,6 +15,7 @@ import type {
   Board,
   ChessState,
   Color,
+  DrawClaimReason,
   GameResult,
   GameStatus,
   HistoryEntry,
@@ -75,6 +76,7 @@ function cloneStatus(status: GameStatus): GameStatus {
   return {
     inCheck: status.inCheck,
     legalMoves: status.legalMoves.map((move) => cloneMove(move)),
+    claimableDraws: [...status.claimableDraws],
     result: status.result ? { ...status.result } : null
   };
 }
@@ -86,6 +88,23 @@ function pieceToFen(piece: Piece): string {
 
 function squareFromRowCol(row: number, col: number): number {
   return row * 8 + col;
+}
+
+function buildDrawResult(reason: Exclude<GameResult["reason"], "checkmate">): GameResult {
+  switch (reason) {
+    case "stalemate":
+      return { winner: null, reason, message: "Draw by stalemate." };
+    case "threefold-repetition":
+      return { winner: null, reason, message: "Draw claimed by threefold repetition." };
+    case "fifty-move-rule":
+      return { winner: null, reason, message: "Draw claimed by fifty-move rule." };
+    case "fivefold-repetition":
+      return { winner: null, reason, message: "Draw by fivefold repetition." };
+    case "seventy-five-move-rule":
+      return { winner: null, reason, message: "Draw by seventy-five-move rule." };
+    case "insufficient-material":
+      return { winner: null, reason, message: "Draw by insufficient material." };
+  }
 }
 
 export class ChessGame {
@@ -136,9 +155,30 @@ export class ChessGame {
     return this.status.legalMoves.filter((move) => move.from === square).map((move) => cloneMove(move));
   }
 
+  getClaimableDraws(): DrawClaimReason[] {
+    return [...this.status.claimableDraws];
+  }
+
   getPiece(square: number): Piece | null {
     const piece = this.state.board[square];
     return piece ? { ...piece } : null;
+  }
+
+  claimDraw(reason?: DrawClaimReason): boolean {
+    if (this.status.result) {
+      return false;
+    }
+
+    const chosenReason = reason ?? this.status.claimableDraws[0];
+    if (!chosenReason || !this.status.claimableDraws.includes(chosenReason)) {
+      return false;
+    }
+
+    this.status = {
+      ...cloneStatus(this.status),
+      result: buildDrawResult(chosenReason)
+    };
+    return true;
   }
 
   moveByAlgebraic(from: string, to: string, promotion?: PieceType): boolean {
@@ -235,7 +275,7 @@ export class ChessGame {
     }
 
     const castling = this.castlingRightsToString(state);
-    const enPassant = this.getEnPassantKey(state);
+    const enPassant = this.getFenEnPassantTarget(state);
     return `${rows.join("/")} ${state.sideToMove} ${castling} ${enPassant} ${state.halfmoveClock} ${state.fullmoveNumber}`;
   }
 
@@ -261,6 +301,10 @@ export class ChessGame {
     return [boardPart, state.sideToMove, this.castlingRightsToString(state), this.getEnPassantKey(state)].join(" ");
   }
 
+  private getFenEnPassantTarget(state: ChessState): string {
+    return state.enPassantTarget === null ? "-" : indexToAlgebraic(state.enPassantTarget);
+  }
+
   private getEnPassantKey(state: ChessState): string {
     if (state.enPassantTarget === null) {
       return "-";
@@ -280,6 +324,15 @@ export class ChessGame {
     const legalMoves = this.getLegalMovesForState(state);
     const kingSquare = this.findKingSquare(state.board, state.sideToMove);
     const inCheck = kingSquare >= 0 && this.isSquareAttacked(state.board, kingSquare, oppositeColor(state.sideToMove));
+    const repetitionCount = positionCounts.get(this.getPositionKey(state)) ?? 0;
+    const claimableDraws: DrawClaimReason[] = [];
+    if (state.halfmoveClock >= 100) {
+      claimableDraws.push("fifty-move-rule");
+    }
+    if (repetitionCount >= 3) {
+      claimableDraws.push("threefold-repetition");
+    }
+
     let result: GameResult | null = null;
 
     if (legalMoves.length === 0) {
@@ -289,32 +342,16 @@ export class ChessGame {
             reason: "checkmate",
             message: `${oppositeColor(state.sideToMove) === "w" ? "White" : "Black"} wins by checkmate.`
           }
-        : {
-            winner: null,
-            reason: "stalemate",
-            message: "Draw by stalemate."
-          };
-    } else if (state.halfmoveClock >= 100) {
-      result = {
-        winner: null,
-        reason: "fifty-move-rule",
-        message: "Draw by fifty-move rule."
-      };
-    } else if ((positionCounts.get(this.getPositionKey(state)) ?? 0) >= 3) {
-      result = {
-        winner: null,
-        reason: "threefold-repetition",
-        message: "Draw by threefold repetition."
-      };
+        : buildDrawResult("stalemate");
+    } else if (state.halfmoveClock >= 150) {
+      result = buildDrawResult("seventy-five-move-rule");
+    } else if (repetitionCount >= 5) {
+      result = buildDrawResult("fivefold-repetition");
     } else if (this.hasInsufficientMaterial(state.board)) {
-      result = {
-        winner: null,
-        reason: "insufficient-material",
-        message: "Draw by insufficient material."
-      };
+      result = buildDrawResult("insufficient-material");
     }
 
-    return { inCheck, legalMoves, result };
+    return { inCheck, legalMoves, claimableDraws: result ? [] : claimableDraws, result };
   }
 
   private hasInsufficientMaterial(board: Board): boolean {
@@ -827,4 +864,4 @@ export class ChessGame {
 }
 
 export { createEmptyBoard, createInitialState, indexToAlgebraic, algebraicToIndex };
-export type { ChessState, Color, Move, MoveRecord, Piece, PieceType };
+export type { ChessState, Color, DrawClaimReason, Move, MoveRecord, Piece, PieceType };

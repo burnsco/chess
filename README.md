@@ -10,8 +10,8 @@ A local two-player chess game built with Vite, React, and TypeScript. No account
   - En passant
   - Pawn promotion with piece picker
   - Check, checkmate, and stalemate detection
-  - Threefold repetition draw
-  - Fifty-move rule draw
+  - Claimable draws by threefold repetition and the fifty-move rule
+  - Automatic draws by fivefold repetition and the seventy-five-move rule
   - Insufficient material draw
 - Click-to-move and drag-and-drop piece movement
 - Visual indicators: selected piece, legal move dots/rings, last move highlight, check glow on king
@@ -74,7 +74,7 @@ The UI never moves pieces directly. It always asks the engine for the set of leg
 3. Any move that leaves that side's king in check is discarded.
 4. Only the remaining moves are exposed to the UI — illegal moves cannot be played.
 
-Castling, en passant, promotion, threefold repetition tracking, insufficient material, and the fifty-move rule are all enforced in the engine layer.
+Castling, en passant, promotion, draw claims, automatic draw thresholds, and insufficient material are all enforced in the engine layer.
 
 ## License
 

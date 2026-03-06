@@ -194,7 +194,7 @@ describe("ChessGame engine", () => {
     expect(status.inCheck).toBe(false);
   });
 
-  it("detects threefold repetition", () => {
+  it("offers a draw claim on threefold repetition without ending the game", () => {
     const game = new ChessGame();
     const sequence: Array<[string, string]> = [
       ["g1", "f3"],
@@ -211,10 +211,35 @@ describe("ChessGame engine", () => {
       expect(game.moveByAlgebraic(from, to)).toBe(true);
     }
 
-    expect(game.getStatus().result?.reason).toBe("threefold-repetition");
+    const status = game.getStatus();
+    expect(status.result).toBeNull();
+    expect(status.claimableDraws).toContain("threefold-repetition");
+    expect(game.moveByAlgebraic("b1", "c3")).toBe(true);
   });
 
-  it("detects the fifty-move rule", () => {
+  it("allows claiming a threefold repetition draw", () => {
+    const game = new ChessGame();
+    const sequence: Array<[string, string]> = [
+      ["g1", "f3"],
+      ["g8", "f6"],
+      ["f3", "g1"],
+      ["f6", "g8"],
+      ["g1", "f3"],
+      ["g8", "f6"],
+      ["f3", "g1"],
+      ["f6", "g8"]
+    ];
+
+    for (const [from, to] of sequence) {
+      expect(game.moveByAlgebraic(from, to)).toBe(true);
+    }
+
+    expect(game.claimDraw("threefold-repetition")).toBe(true);
+    expect(game.getStatus().result?.reason).toBe("threefold-repetition");
+    expect(game.moveByAlgebraic("b1", "c3")).toBe(false);
+  });
+
+  it("offers a draw claim on the fifty-move rule without ending the game", () => {
     const game = new ChessGame(
       createState(
         {
@@ -230,7 +255,48 @@ describe("ChessGame engine", () => {
     );
 
     expect(game.moveByAlgebraic("a1", "a2")).toBe(true);
+    const status = game.getStatus();
+    expect(status.result).toBeNull();
+    expect(status.claimableDraws).toContain("fifty-move-rule");
+    expect(game.claimDraw("fifty-move-rule")).toBe(true);
     expect(game.getStatus().result?.reason).toBe("fifty-move-rule");
+  });
+
+  it("detects fivefold repetition automatically", () => {
+    const game = new ChessGame();
+    const cycle: Array<[string, string]> = [
+      ["g1", "f3"],
+      ["g8", "f6"],
+      ["f3", "g1"],
+      ["f6", "g8"]
+    ];
+
+    for (let i = 0; i < 4; i += 1) {
+      for (const [from, to] of cycle) {
+        expect(game.moveByAlgebraic(from, to)).toBe(true);
+      }
+    }
+
+    expect(game.getStatus().result?.reason).toBe("fivefold-repetition");
+  });
+
+  it("detects the seventy-five-move rule automatically", () => {
+    const game = new ChessGame(
+      createState(
+        {
+          e1: piece("w", "k"),
+          e8: piece("b", "k"),
+          a1: piece("w", "r")
+        },
+        {
+          halfmoveClock: 149,
+          sideToMove: "w"
+        }
+      )
+    );
+
+    expect(game.moveByAlgebraic("a1", "a2")).toBe(true);
+    expect(game.getStatus().result?.reason).toBe("seventy-five-move-rule");
   });
 
   it("detects insufficient material", () => {
@@ -242,5 +308,13 @@ describe("ChessGame engine", () => {
     );
 
     expect(game.getStatus().result?.reason).toBe("insufficient-material");
+  });
+
+  it("includes the en passant target square in FEN after a double pawn push", () => {
+    const game = new ChessGame();
+
+    expect(game.moveByAlgebraic("a2", "a4")).toBe(true);
+    expect(game.toFen()).toBe("rnbqkbnr/pppppppp/8/8/P7/8/1PPPPPPP/RNBQKBNR b KQkq a3 0 1");
+    expect(game.getMoveHistory()[0]?.resultingFen).toBe("rnbqkbnr/pppppppp/8/8/P7/8/1PPPPPPP/RNBQKBNR b KQkq a3 0 1");
   });
 });

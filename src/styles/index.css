@@ -596,6 +596,15 @@ button {
   color: var(--text-1);
 }
 
+.claim-draw-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-dim);
+}
+
 /* ─── Result Card ───────────────────────────────────────────────────────────── */
 .result-card {
   text-align: center;

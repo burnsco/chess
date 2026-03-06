@@ -53,11 +53,15 @@ export interface MoveRecord {
   resultingFen: string;
 }
 
+export type DrawClaimReason = "threefold-repetition" | "fifty-move-rule";
+
 export type GameResultReason =
   | "checkmate"
   | "stalemate"
   | "threefold-repetition"
   | "fifty-move-rule"
+  | "fivefold-repetition"
+  | "seventy-five-move-rule"
   | "insufficient-material";
 
 export interface GameResult {
@@ -69,6 +73,7 @@ export interface GameResult {
 export interface GameStatus {
   inCheck: boolean;
   legalMoves: Move[];
+  claimableDraws: DrawClaimReason[];
   result: GameResult | null;
 }
 
