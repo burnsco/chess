@@ -1,0 +1,398 @@
+import { useMemo, useRef, useState } from "react";
+import { ChessBoard } from "./components/ChessBoard";
+import { MoveList } from "./components/MoveList";
+import { ChessGame, indexToAlgebraic } from "./engine/ChessGame";
+import type { ChessState, Color, GameResult, GameStatus, Move, Piece, PieceType } from "./engine/types";
+import { PIECE_SYMBOLS } from "./engine/board";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface PromotionRequest {
+  from: number;
+  to: number;
+  options: Move[];
+}
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const PROMOTION_ORDER: PieceType[] = ["q", "r", "b", "n"];
+
+const PIECE_VALUES: Record<PieceType, number> = {
+  p: 1,
+  n: 3,
+  b: 3,
+  r: 5,
+  q: 9,
+  k: 0,
+};
+
+const PIECE_NAMES: Record<PieceType, string> = {
+  q: "Queen",
+  r: "Rook",
+  b: "Bishop",
+  n: "Knight",
+  p: "Pawn",
+  k: "King",
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function colorName(color: Color): string {
+  return color === "w" ? "White" : "Black";
+}
+
+function materialScore(pieces: Piece[]): number {
+  return pieces.reduce((sum, p) => sum + PIECE_VALUES[p.type], 0);
+}
+
+function resultIcon(result: GameResult): string {
+  if (result.winner === "w") return "♔";
+  if (result.winner === "b") return "♚";
+  return "½";
+}
+
+function resultHeadline(result: GameResult): string {
+  if (result.winner) return `${colorName(result.winner)} wins`;
+  return "Draw";
+}
+
+function formatReason(reason: string): string {
+  return reason.replace(/-/g, " ");
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+interface PlayerBarProps {
+  color: Color;
+  capturedByThis: Piece[];
+  advantage: number;
+  isActiveTurn: boolean;
+  isInCheck: boolean;
+  isGameOver: boolean;
+}
+
+function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, isGameOver }: PlayerBarProps) {
+  const cls = [
+    "player-bar",
+    isActiveTurn && !isGameOver ? "player-bar--active" : "",
+    isInCheck ? "player-bar--check" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={cls}>
+      <div className={`player-avatar player-avatar--${color}`} aria-hidden="true" />
+      <span className="player-name">{colorName(color)}</span>
+      <div className="player-captures" aria-label={`${colorName(color)} captured pieces`}>
+        {capturedByThis.map((piece, i) => (
+          <span key={i} className="captured-icon" aria-hidden="true">
+            {PIECE_SYMBOLS[piece.color][piece.type]}
+          </span>
+        ))}
+        {advantage > 0 && <span className="material-adv">+{advantage}</span>}
+      </div>
+      {isActiveTurn && !isGameOver && !isInCheck && (
+        <span className="turn-dot" aria-label="Active turn" />
+      )}
+      {isInCheck && <span className="check-badge">Check</span>}
+    </div>
+  );
+}
+
+interface GameInfoProps {
+  state: ChessState;
+  status: GameStatus;
+  onReset: () => void;
+}
+
+function GameInfo({ state, status, onReset }: GameInfoProps) {
+  if (status.result) {
+    return (
+      <div className="card result-card">
+        <div className="result-icon" aria-hidden="true">
+          {resultIcon(status.result)}
+        </div>
+        <h2 className="result-headline">{resultHeadline(status.result)}</h2>
+        <p className="result-reason">{formatReason(status.result.reason)}</p>
+        <button type="button" className="btn btn-accent result-new-game" onClick={onReset}>
+          Play again
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <p className="card-label">Status</p>
+      <div className="turn-row">
+        <span className={`color-pip color-pip--${state.sideToMove}`} aria-hidden="true" />
+        <span className="turn-text">{colorName(state.sideToMove)} to move</span>
+      </div>
+      {status.inCheck && (
+        <div className="check-alert" role="alert">
+          ⚠ In check
+        </div>
+      )}
+      <div className="stat-grid">
+        <div className="stat-cell">
+          <span className="stat-label">Move</span>
+          <span className="stat-value">{state.fullmoveNumber}</span>
+        </div>
+        <div className="stat-cell">
+          <span className="stat-label">50-move</span>
+          <span className="stat-value">{state.halfmoveClock}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface PromotionOverlayProps {
+  request: PromotionRequest;
+  sideToMove: Color;
+  onChoose: (p: PieceType) => void;
+  onCancel: () => void;
+}
+
+function PromotionOverlay({ request, sideToMove, onChoose, onCancel }: PromotionOverlayProps) {
+  return (
+    <div className="modal-overlay" onClick={onCancel} role="presentation">
+      <div
+        className="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose promotion piece"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="modal-title">Promote pawn</h2>
+        <p className="modal-desc">
+          {indexToAlgebraic(request.from)} → {indexToAlgebraic(request.to)}
+        </p>
+        <div className="promotion-grid">
+          {PROMOTION_ORDER.map((pieceType) => {
+            const move = request.options.find((o) => o.promotion === pieceType);
+            if (!move) return null;
+            return (
+              <button
+                key={pieceType}
+                type="button"
+                className="promotion-option"
+                onClick={() => onChoose(pieceType)}
+              >
+                <span className="promo-symbol" aria-hidden="true">
+                  {PIECE_SYMBOLS[sideToMove][pieceType]}
+                </span>
+                <span className="promo-name">{PIECE_NAMES[pieceType]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const gameRef = useRef(new ChessGame());
+  const [, setVersion] = useState(0);
+  const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
+  const [dragSource, setDragSource] = useState<number | null>(null);
+  const [promotionRequest, setPromotionRequest] = useState<PromotionRequest | null>(null);
+
+  const game = gameRef.current;
+  const state = game.getState();
+  const status = game.getStatus();
+  const moveHistory = game.getMoveHistory();
+  const selectableMoves = selectedSquare === null ? [] : game.getLegalMovesFrom(selectedSquare);
+
+  const whiteScore = materialScore(state.capturedPieces.b);
+  const blackScore = materialScore(state.capturedPieces.w);
+  const whiteAdv = Math.max(0, whiteScore - blackScore);
+  const blackAdv = Math.max(0, blackScore - whiteScore);
+
+  const headerBadge = useMemo(() => {
+    if (status.result) {
+      return (
+        <span className="badge badge-result">
+          {resultHeadline(status.result)} · {formatReason(status.result.reason)}
+        </span>
+      );
+    }
+    return (
+      <span className={`badge badge-turn${status.inCheck ? " badge-check" : ""}`}>
+        <span className={`pip pip-${state.sideToMove}`} aria-hidden="true" />
+        {colorName(state.sideToMove)} to move{status.inCheck ? " · Check!" : ""}
+      </span>
+    );
+  }, [state.sideToMove, status.inCheck, status.result]);
+
+  const refresh = () => setVersion((v) => v + 1);
+
+  const clearSelection = () => {
+    setSelectedSquare(null);
+    setDragSource(null);
+    setPromotionRequest(null);
+  };
+
+  const requestMove = (from: number, to: number) => {
+    const candidateMoves = game.getLegalMovesFrom(from).filter((m) => m.to === to);
+    if (candidateMoves.length === 0) return false;
+
+    if (candidateMoves.some((m) => m.promotion)) {
+      setPromotionRequest({ from, to, options: candidateMoves });
+      return true;
+    }
+
+    const moved = game.move(from, to);
+    if (moved) {
+      clearSelection();
+      refresh();
+    }
+    return moved;
+  };
+
+  const handleSquareClick = (square: number) => {
+    if (promotionRequest || status.result) return;
+
+    const piece = game.getPiece(square);
+
+    if (selectedSquare === square) {
+      clearSelection();
+      return;
+    }
+
+    if (selectedSquare === null) {
+      if (piece && piece.color === state.sideToMove) setSelectedSquare(square);
+      return;
+    }
+
+    if (requestMove(selectedSquare, square)) return;
+
+    if (piece && piece.color === state.sideToMove) {
+      setSelectedSquare(square);
+    } else {
+      clearSelection();
+    }
+  };
+
+  const handlePieceDragStart = (square: number) => {
+    if (promotionRequest || status.result) return;
+    const piece = game.getPiece(square);
+    if (!piece || piece.color !== state.sideToMove) return;
+    setSelectedSquare(square);
+    setDragSource(square);
+  };
+
+  const handlePieceDrop = (targetSquare: number) => {
+    if (promotionRequest || status.result) return;
+    const from = dragSource ?? selectedSquare;
+    if (from === null) return;
+
+    if (!requestMove(from, targetSquare)) {
+      const targetPiece = game.getPiece(targetSquare);
+      if (targetPiece && targetPiece.color === state.sideToMove) setSelectedSquare(targetSquare);
+      setDragSource(null);
+    }
+  };
+
+  const handlePromotionChoice = (promotion: PieceType) => {
+    if (!promotionRequest) return;
+    const moved = game.move(promotionRequest.from, promotionRequest.to, promotion);
+    if (moved) {
+      clearSelection();
+      refresh();
+      return;
+    }
+    setPromotionRequest(null);
+  };
+
+  const handleReset = () => {
+    game.reset();
+    clearSelection();
+    refresh();
+  };
+
+  const handleUndo = () => {
+    if (game.undo()) {
+      clearSelection();
+      refresh();
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      {/* Header */}
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-piece" aria-hidden="true">♟</span>
+          <span className="brand-name">Chess</span>
+        </div>
+        <div className="header-status">{headerBadge}</div>
+        <div className="header-controls">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={handleUndo}
+            disabled={moveHistory.length === 0}
+          >
+            ↩ Undo
+          </button>
+          <button type="button" className="btn btn-accent" onClick={handleReset}>
+            New game
+          </button>
+        </div>
+      </header>
+
+      {/* Main */}
+      <div className="main-layout">
+        {/* Board column */}
+        <div className="board-area">
+          <PlayerBar
+            color="b"
+            capturedByThis={state.capturedPieces.w}
+            advantage={blackAdv}
+            isActiveTurn={state.sideToMove === "b"}
+            isInCheck={status.inCheck && state.sideToMove === "b"}
+            isGameOver={!!status.result}
+          />
+          <ChessBoard
+            state={state}
+            selectedSquare={selectedSquare}
+            legalMoves={selectableMoves}
+            inCheck={status.inCheck}
+            onSquareClick={handleSquareClick}
+            onPieceDragStart={handlePieceDragStart}
+            onPieceDrop={handlePieceDrop}
+          />
+          <PlayerBar
+            color="w"
+            capturedByThis={state.capturedPieces.b}
+            advantage={whiteAdv}
+            isActiveTurn={state.sideToMove === "w"}
+            isInCheck={status.inCheck && state.sideToMove === "w"}
+            isGameOver={!!status.result}
+          />
+        </div>
+
+        {/* Sidebar */}
+        <aside className="sidebar">
+          <GameInfo state={state} status={status} onReset={handleReset} />
+          <MoveList moves={moveHistory} />
+        </aside>
+      </div>
+
+      {/* Promotion overlay */}
+      {promotionRequest && (
+        <PromotionOverlay
+          request={promotionRequest}
+          sideToMove={state.sideToMove}
+          onChoose={handlePromotionChoice}
+          onCancel={() => setPromotionRequest(null)}
+        />
+      )}
+    </div>
+  );
+}
