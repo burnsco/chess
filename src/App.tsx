@@ -1,9 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AI_DIFFICULTY_SETTINGS, AI_MOVE_DELAY_MS } from "./ai/config";
+import { parseUciMove } from "./ai/uci";
 import { ChessBoard } from "./components/ChessBoard";
 import { MoveList } from "./components/MoveList";
 import { ChessGame, indexToAlgebraic } from "./engine/ChessGame";
+import type { GameMode, AIDifficulty } from "./ai/config";
+import type { StockfishManager } from "./ai/stockfishManager";
 import type { ChessState, Color, GameResult, GameStatus, Move, Piece, PieceType } from "./engine/types";
-import { PIECE_SYMBOLS } from "./engine/board";
+import { PIECE_SYMBOLS, oppositeColor } from "./engine/board";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -64,18 +68,42 @@ function formatClaimableDraws(reasons: GameStatus["claimableDraws"]): string {
   return reasons.map((reason) => formatReason(reason)).join(" or ");
 }
 
+function playerLabel(color: Color, mode: GameMode, humanColor: Color): string {
+  if (mode !== "ai") {
+    return colorName(color);
+  }
+
+  return color === humanColor ? `${colorName(color)} · You` : `${colorName(color)} · AI`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "AI move failed.";
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 interface PlayerBarProps {
   color: Color;
+  label: string;
   capturedByThis: Piece[];
   advantage: number;
   isActiveTurn: boolean;
   isInCheck: boolean;
   isGameOver: boolean;
+  isThinking?: boolean;
 }
 
-function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, isGameOver }: PlayerBarProps) {
+function PlayerBar({ color, label, capturedByThis, advantage, isActiveTurn, isInCheck, isGameOver, isThinking = false }: PlayerBarProps) {
   const cls = [
     "player-bar",
     isActiveTurn && !isGameOver ? "player-bar--active" : "",
@@ -87,7 +115,7 @@ function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, 
   return (
     <div className={cls}>
       <div className={`player-avatar player-avatar--${color}`} aria-hidden="true" />
-      <span className="player-name">{colorName(color)}</span>
+      <span className="player-name">{label}</span>
       <div className="player-captures" aria-label={`${colorName(color)} captured pieces`}>
         {capturedByThis.map((piece, i) => (
           <span key={i} className="captured-icon" aria-hidden="true">
@@ -96,10 +124,125 @@ function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, 
         ))}
         {advantage > 0 && <span className="material-adv">+{advantage}</span>}
       </div>
-      {isActiveTurn && !isGameOver && !isInCheck && (
+      {isActiveTurn && !isGameOver && !isInCheck && !isThinking && (
         <span className="turn-dot" aria-label="Active turn" />
       )}
       {isInCheck && <span className="check-badge">Check</span>}
+      {isThinking && <span className="thinking-badge">Thinking…</span>}
+    </div>
+  );
+}
+
+interface AIControlsProps {
+  mode: GameMode;
+  playerColor: Color;
+  difficulty: AIDifficulty;
+  aiColor: Color;
+  aiReady: boolean;
+  aiThinking: boolean;
+  aiError: string | null;
+  onModeChange: (mode: GameMode) => void;
+  onPlayerColorChange: (color: Color) => void;
+  onDifficultyChange: (difficulty: AIDifficulty) => void;
+  onReset: () => void;
+}
+
+function AIControls({
+  mode,
+  playerColor,
+  difficulty,
+  aiColor,
+  aiReady,
+  aiThinking,
+  aiError,
+  onModeChange,
+  onPlayerColorChange,
+  onDifficultyChange,
+  onReset
+}: AIControlsProps) {
+  const statusText =
+    mode !== "ai"
+      ? "Pass-and-play mode."
+      : aiThinking
+        ? aiReady
+          ? "AI thinking..."
+          : "Loading AI..."
+        : aiReady
+          ? `AI plays ${colorName(aiColor)}.`
+          : "AI will load on demand.";
+
+  return (
+    <div className="card">
+      <p className="card-label">Opponent</p>
+      <div className="segmented-control">
+        <button
+          type="button"
+          className={`segment${mode === "human" ? " segment--active" : ""}`}
+          onClick={() => onModeChange("human")}
+        >
+          Human vs Human
+        </button>
+        <button
+          type="button"
+          className={`segment${mode === "ai" ? " segment--active" : ""}`}
+          onClick={() => onModeChange("ai")}
+        >
+          Human vs AI
+        </button>
+      </div>
+
+      {mode === "ai" ? (
+        <>
+          <div className="control-group">
+            <span className="control-label">Play as</span>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={`segment${playerColor === "w" ? " segment--active" : ""}`}
+                onClick={() => onPlayerColorChange("w")}
+              >
+                White
+              </button>
+              <button
+                type="button"
+                className={`segment${playerColor === "b" ? " segment--active" : ""}`}
+                onClick={() => onPlayerColorChange("b")}
+              >
+                Black
+              </button>
+            </div>
+          </div>
+
+          <div className="control-group">
+            <span className="control-label">Difficulty</span>
+            <div className="segmented-control segmented-control--triple">
+              {(Object.entries(AI_DIFFICULTY_SETTINGS) as Array<[AIDifficulty, (typeof AI_DIFFICULTY_SETTINGS)[AIDifficulty]]>).map(
+                ([key, settings]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`segment${difficulty === key ? " segment--active" : ""}`}
+                    onClick={() => onDifficultyChange(key)}
+                  >
+                    {settings.label}
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+
+          <div className={`engine-status${aiThinking ? " engine-status--thinking" : ""}`} role="status" aria-live="polite">
+            <span className={`engine-dot${aiThinking ? " engine-dot--thinking" : ""}`} aria-hidden="true" />
+            <span>{statusText}</span>
+          </div>
+
+          {aiError ? <p className="engine-error">{aiError}</p> : null}
+
+          <button type="button" className="btn btn-ghost control-reset" onClick={onReset}>
+            New AI game
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -107,11 +250,12 @@ function PlayerBar({ color, capturedByThis, advantage, isActiveTurn, isInCheck, 
 interface GameInfoProps {
   state: ChessState;
   status: GameStatus;
+  claimDrawDisabled?: boolean;
   onClaimDraw: () => void;
   onReset: () => void;
 }
 
-function GameInfo({ state, status, onClaimDraw, onReset }: GameInfoProps) {
+function GameInfo({ state, status, claimDrawDisabled = false, onClaimDraw, onReset }: GameInfoProps) {
   if (status.result) {
     return (
       <div className="card result-card">
@@ -152,7 +296,7 @@ function GameInfo({ state, status, onClaimDraw, onReset }: GameInfoProps) {
       {status.claimableDraws.length > 0 && (
         <div className="claim-draw-row">
           <p className="result-reason">Draw available by claim: {formatClaimableDraws(status.claimableDraws)}</p>
-          <button type="button" className="btn btn-ghost" onClick={onClaimDraw}>
+          <button type="button" className="btn btn-ghost" onClick={onClaimDraw} disabled={claimDrawDisabled}>
             Claim draw
           </button>
         </div>
@@ -210,16 +354,32 @@ function PromotionOverlay({ request, sideToMove, onChoose, onCancel }: Promotion
 
 export default function App() {
   const gameRef = useRef(new ChessGame());
+  const aiManagerRef = useRef<StockfishManager | null>(null);
+  const aiRequestTokenRef = useRef(0);
+  const aiPreparedGameRef = useRef<number | null>(null);
   const [, setVersion] = useState(0);
+  const [gameSession, setGameSession] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [dragSource, setDragSource] = useState<number | null>(null);
   const [promotionRequest, setPromotionRequest] = useState<PromotionRequest | null>(null);
+  const [gameMode, setGameMode] = useState<GameMode>("human");
+  const [playerColor, setPlayerColor] = useState<Color>("w");
+  const [aiThinking, setAiThinking] = useState(false);
+  const [aiReady, setAiReady] = useState(false);
+  const [aiDifficulty, setAiDifficulty] = useState<AIDifficulty>("medium");
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const game = gameRef.current;
   const state = game.getState();
   const status = game.getStatus();
+  const currentFen = game.toFen();
   const moveHistory = game.getMoveHistory();
   const selectableMoves = selectedSquare === null ? [] : game.getLegalMovesFrom(selectedSquare);
+  const aiColor = oppositeColor(playerColor);
+  const isAiMode = gameMode === "ai";
+  const isAiTurn = isAiMode && state.sideToMove === aiColor;
+  const boardLocked = Boolean(promotionRequest || status.result || (isAiMode && isAiTurn) || aiThinking);
+  const boardOverlayMessage = isAiTurn ? (aiReady ? "AI thinking..." : "Loading AI...") : null;
 
   const whiteScore = materialScore(state.capturedPieces.b);
   const blackScore = materialScore(state.capturedPieces.w);
@@ -250,6 +410,29 @@ export default function App() {
     setPromotionRequest(null);
   };
 
+  const cancelAI = (dispose = false) => {
+    aiRequestTokenRef.current += 1;
+    aiManagerRef.current?.stopSearch();
+    setAiThinking(false);
+
+    if (dispose) {
+      aiManagerRef.current?.dispose();
+      aiManagerRef.current = null;
+      aiPreparedGameRef.current = null;
+      setAiReady(false);
+    }
+  };
+
+  const ensureAIManager = async (): Promise<StockfishManager> => {
+    if (!aiManagerRef.current) {
+      const module = await import("./ai/stockfishManager");
+      aiManagerRef.current = new module.StockfishManager();
+      setAiReady(false);
+    }
+
+    return aiManagerRef.current;
+  };
+
   const requestMove = (from: number, to: number) => {
     const candidateMoves = game.getLegalMovesFrom(from).filter((m) => m.to === to);
     if (candidateMoves.length === 0) return false;
@@ -267,8 +450,110 @@ export default function App() {
     return moved;
   };
 
+  useEffect(() => {
+    return () => {
+      aiManagerRef.current?.dispose();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (gameMode !== "ai") {
+      cancelAI(true);
+      setAiError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAiError(null);
+    setAiReady(false);
+
+    void ensureAIManager()
+      .then((manager) => manager.ensureReady())
+      .then(() => {
+        if (!cancelled) {
+          setAiReady(true);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAiError(errorMessage(error));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gameMode]);
+
+  useEffect(() => {
+    if (!isAiMode || !isAiTurn || promotionRequest || status.result) {
+      return;
+    }
+
+    let cancelled = false;
+    const requestToken = ++aiRequestTokenRef.current;
+    setAiThinking(true);
+    setAiError(null);
+    clearSelection();
+
+    void (async () => {
+      try {
+        const manager = await ensureAIManager();
+
+        if (aiPreparedGameRef.current !== gameSession) {
+          await manager.newGame();
+          aiPreparedGameRef.current = gameSession;
+        } else {
+          await manager.ensureReady();
+        }
+
+        if (cancelled || aiRequestTokenRef.current !== requestToken) {
+          return;
+        }
+
+        setAiReady(true);
+
+        const bestMove = await manager.getBestMove(currentFen, aiDifficulty);
+        if (cancelled || aiRequestTokenRef.current !== requestToken) {
+          return;
+        }
+
+        const parsedMove = bestMove ? parseUciMove(bestMove) : null;
+        if (!parsedMove) {
+          throw new Error("AI did not return a legal move.");
+        }
+
+        await sleep(AI_MOVE_DELAY_MS);
+        if (cancelled || aiRequestTokenRef.current !== requestToken) {
+          return;
+        }
+
+        const moved = game.move(parsedMove.from, parsedMove.to, parsedMove.promotion);
+        if (!moved) {
+          throw new Error(`AI suggested an invalid move: ${bestMove}`);
+        }
+
+        clearSelection();
+        refresh();
+      } catch (error) {
+        if (!cancelled && aiRequestTokenRef.current === requestToken) {
+          setAiError(errorMessage(error));
+        }
+      } finally {
+        if (!cancelled && aiRequestTokenRef.current === requestToken) {
+          setAiThinking(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      aiManagerRef.current?.stopSearch();
+    };
+  }, [aiDifficulty, currentFen, gameSession, isAiMode, isAiTurn, promotionRequest, status.result]);
+
   const handleSquareClick = (square: number) => {
-    if (promotionRequest || status.result) return;
+    if (boardLocked) return;
 
     const piece = game.getPiece(square);
 
@@ -292,7 +577,7 @@ export default function App() {
   };
 
   const handlePieceDragStart = (square: number) => {
-    if (promotionRequest || status.result) return;
+    if (boardLocked) return;
     const piece = game.getPiece(square);
     if (!piece || piece.color !== state.sideToMove) return;
     setSelectedSquare(square);
@@ -300,7 +585,7 @@ export default function App() {
   };
 
   const handlePieceDrop = (targetSquare: number) => {
-    if (promotionRequest || status.result) return;
+    if (boardLocked) return;
     const from = dragSource ?? selectedSquare;
     if (from === null) return;
 
@@ -323,19 +608,38 @@ export default function App() {
   };
 
   const handleReset = () => {
+    cancelAI();
     game.reset();
+    setGameSession((session) => session + 1);
     clearSelection();
     refresh();
   };
 
   const handleUndo = () => {
-    if (game.undo()) {
-      clearSelection();
-      refresh();
+    cancelAI();
+
+    if (!game.undo()) {
+      return;
     }
+
+    if (isAiMode) {
+      while (game.getMoveHistory().length > 0 && game.getState().sideToMove !== playerColor) {
+        if (!game.undo()) {
+          break;
+        }
+      }
+    }
+
+    clearSelection();
+    refresh();
   };
 
   const handleClaimDraw = () => {
+    if (isAiTurn || aiThinking) {
+      return;
+    }
+
+    cancelAI();
     if (game.claimDraw()) {
       clearSelection();
       refresh();
@@ -356,7 +660,7 @@ export default function App() {
             type="button"
             className="btn btn-ghost"
             onClick={handleUndo}
-            disabled={moveHistory.length === 0}
+            disabled={moveHistory.length === 0 || aiThinking || isAiTurn}
           >
             ↩ Undo
           </button>
@@ -372,34 +676,60 @@ export default function App() {
         <div className="board-area">
           <PlayerBar
             color="b"
+            label={playerLabel("b", gameMode, playerColor)}
             capturedByThis={state.capturedPieces.w}
             advantage={blackAdv}
             isActiveTurn={state.sideToMove === "b"}
             isInCheck={status.inCheck && state.sideToMove === "b"}
             isGameOver={!!status.result}
+            isThinking={isAiMode && aiThinking && aiColor === "b"}
           />
           <ChessBoard
             state={state}
             selectedSquare={selectedSquare}
             legalMoves={selectableMoves}
             inCheck={status.inCheck}
+            interactionDisabled={boardLocked}
+            overlayMessage={boardOverlayMessage}
+            perspective={isAiMode ? playerColor : "w"}
             onSquareClick={handleSquareClick}
             onPieceDragStart={handlePieceDragStart}
             onPieceDrop={handlePieceDrop}
           />
           <PlayerBar
             color="w"
+            label={playerLabel("w", gameMode, playerColor)}
             capturedByThis={state.capturedPieces.b}
             advantage={whiteAdv}
             isActiveTurn={state.sideToMove === "w"}
             isInCheck={status.inCheck && state.sideToMove === "w"}
             isGameOver={!!status.result}
+            isThinking={isAiMode && aiThinking && aiColor === "w"}
           />
         </div>
 
         {/* Sidebar */}
         <aside className="sidebar">
-          <GameInfo state={state} status={status} onClaimDraw={handleClaimDraw} onReset={handleReset} />
+          <AIControls
+            mode={gameMode}
+            playerColor={playerColor}
+            difficulty={aiDifficulty}
+            aiColor={aiColor}
+            aiReady={aiReady}
+            aiThinking={aiThinking}
+            aiError={aiError}
+            onModeChange={setGameMode}
+            onPlayerColorChange={setPlayerColor}
+            onDifficultyChange={setAiDifficulty}
+            onReset={handleReset}
+          />
+          <GameInfo
+            state={state}
+            status={status}
+            claimDrawDisabled={isAiTurn || aiThinking}
+            onClaimDraw={handleClaimDraw}
+            onReset={handleReset}
+          />
           <MoveList moves={moveHistory} />
         </aside>
       </div>

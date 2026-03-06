@@ -1,11 +1,14 @@
 import { FILES, PIECE_SYMBOLS, getFile, getRankIndex, indexToAlgebraic } from "../engine/board";
-import type { ChessState, Move, Piece } from "../engine/types";
+import type { ChessState, Color, Move, Piece } from "../engine/types";
 
 interface ChessBoardProps {
   state: ChessState;
   selectedSquare: number | null;
   legalMoves: Move[];
   inCheck: boolean;
+  interactionDisabled?: boolean;
+  overlayMessage?: string | null;
+  perspective?: Color;
   onSquareClick: (square: number) => void;
   onPieceDragStart: (square: number) => void;
   onPieceDrop: (targetSquare: number) => void;
@@ -20,6 +23,9 @@ export function ChessBoard({
   selectedSquare,
   legalMoves,
   inCheck,
+  interactionDisabled = false,
+  overlayMessage = null,
+  perspective = "w",
   onSquareClick,
   onPieceDragStart,
   onPieceDrop,
@@ -35,11 +41,15 @@ export function ChessBoard({
   const checkSquare = inCheck
     ? state.board.findIndex((p) => p !== null && p.type === "k" && p.color === state.sideToMove)
     : -1;
+  const displaySquares =
+    perspective === "w"
+      ? Array.from({ length: 64 }, (_, square) => square)
+      : Array.from({ length: 64 }, (_, square) => 63 - square);
 
   return (
-    <div className="board-shell">
+    <div className={`board-shell${interactionDisabled ? " board-shell--locked" : ""}`}>
       <div className="board" role="grid" aria-label="Chess board">
-        {Array.from({ length: 64 }, (_, square) => {
+        {displaySquares.map((square, displayIndex) => {
           const piece = state.board[square];
           const isLight = (getFile(square) + getRankIndex(square)) % 2 === 1;
           const isSelected = selectedSquare === square;
@@ -53,6 +63,8 @@ export function ChessBoard({
           const rank = 8 - getRankIndex(square);
           const file = FILES[getFile(square)];
           const isCapture = isLegalTarget && piece !== null;
+          const displayFile = displayIndex % 8;
+          const displayRank = Math.floor(displayIndex / 8);
 
           const squareCls = [
             "square",
@@ -69,22 +81,25 @@ export function ChessBoard({
               key={square}
               type="button"
               className={squareCls}
+              disabled={interactionDisabled}
               onClick={() => onSquareClick(square)}
               onDragOver={(e) => {
-                if (selectedSquare !== null) e.preventDefault();
+                if (!interactionDisabled && selectedSquare !== null) e.preventDefault();
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                onPieceDrop(square);
+                if (!interactionDisabled) {
+                  onPieceDrop(square);
+                }
               }}
               aria-label={`Square ${label}${piece ? `, ${piece.color === "w" ? "white" : "black"} ${piece.type}` : ""}${isSelected ? ", selected" : ""}${isLegalTarget ? ", legal target" : ""}`}
             >
-              {getFile(square) === 0 ? (
+              {displayFile === 0 ? (
                 <span className="rank-label" aria-hidden="true">
                   {rank}
                 </span>
               ) : null}
-              {getRankIndex(square) === 7 ? (
+              {displayRank === 7 ? (
                 <span className="file-label" aria-hidden="true">
                   {file}
                 </span>
@@ -98,7 +113,7 @@ export function ChessBoard({
               {piece ? (
                 <span
                   className={`piece ${piece.color === "w" ? "white-piece" : "black-piece"}`}
-                  draggable={isMovablePiece(piece, state)}
+                  draggable={!interactionDisabled && isMovablePiece(piece, state)}
                   onDragStart={() => onPieceDragStart(square)}
                 >
                   {PIECE_SYMBOLS[piece.color][piece.type]}
@@ -108,6 +123,11 @@ export function ChessBoard({
           );
         })}
       </div>
+      {overlayMessage ? (
+        <div className="board-overlay" role="status" aria-live="polite">
+          {overlayMessage}
+        </div>
+      ) : null}
     </div>
   );
 }

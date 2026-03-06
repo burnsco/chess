@@ -1,6 +1,6 @@
 # Chess
 
-A local two-player chess game built with Vite, React, and TypeScript. No accounts, no servers, no AI — just a clean, fast pass-and-play chess board in the browser.
+A browser chess game built with Vite, React, and TypeScript. It supports both local pass-and-play and a Stockfish-backed AI opponent without replacing the in-app rules engine.
 
 ## Features
 
@@ -18,6 +18,10 @@ A local two-player chess game built with Vite, React, and TypeScript. No account
 - Move history in algebraic notation with auto-scroll to latest move
 - Captured pieces display with material advantage count per player
 - Undo last move
+- Human vs AI mode with a lazily loaded Stockfish Web Worker
+  - Play as White or Black
+  - Easy / Medium / Hard difficulty via engine thinking time
+  - AI thinking indicator and input lockout while the engine searches
 - Dark UI that fits a single viewport on desktop
 
 ## Tech Stack
@@ -26,6 +30,7 @@ A local two-player chess game built with Vite, React, and TypeScript. No account
 - [React 19](https://react.dev/) — UI
 - [TypeScript](https://www.typescriptlang.org/) — end-to-end type safety
 - [Vitest](https://vitest.dev/) — engine unit tests
+- [Stockfish.js](https://github.com/nmrugg/stockfish.js) — WebAssembly Stockfish build used inside a Web Worker
 - Pure CSS — no UI frameworks or component libraries
 
 ## Getting Started
@@ -36,6 +41,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Stockfish is loaded only when `Human vs AI` mode is enabled. The engine runs in a dedicated Web Worker, communicates over UCI, and returns moves that are still validated and applied by the existing `ChessGame` rules engine.
 
 ## Scripts
 
@@ -54,6 +61,11 @@ src/
     types.ts        # Shared types: Piece, Move, ChessState, GameStatus, etc.
     board.ts        # Board helpers, piece symbols, coordinate utilities
     ChessGame.ts    # Full rules engine + ChessGame class
+  ai/
+    config.ts             # AI mode + difficulty settings
+    stockfishWorker.ts    # Worker factory for the Stockfish WASM build
+    stockfishManager.ts   # UCI manager for worker lifecycle and bestmove parsing
+    uci.ts                # UCI parsing helpers
   components/
     ChessBoard.tsx  # Board renderer — squares, pieces, highlights, drag/drop
     MoveList.tsx    # Move history panel with auto-scroll
@@ -75,6 +87,14 @@ The UI never moves pieces directly. It always asks the engine for the set of leg
 4. Only the remaining moves are exposed to the UI — illegal moves cannot be played.
 
 Castling, en passant, promotion, draw claims, automatic draw thresholds, and insufficient material are all enforced in the engine layer.
+
+## AI Integration Notes
+
+- The app does not duplicate move rules for the AI. Stockfish only suggests a UCI move.
+- The current position is converted to FEN using `ChessGame.toFen()`.
+- The position is sent to Stockfish with `position fen ...`.
+- The engine searches with `go movetime ...`.
+- The chosen move is converted back into board coordinates and applied through `game.move(...)`, so castling, en passant, promotion, checkmate, stalemate, and draw logic stay inside the existing rules engine.
 
 ## License
 
