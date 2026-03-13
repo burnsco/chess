@@ -453,6 +453,8 @@ export default function App() {
 
   const [searchingMatch, setSearchingMatch] = useState(false);
   const [multiplayerId, setMultiplayerId] = useState<string | null>(null);
+  const [opponentWantsRematch, setOpponentWantsRematch] = useState(false);
+  const [rematchRequested, setRematchRequested] = useState(false);
 
   const game = gameRef.current;
   const state = game.getState();
@@ -622,8 +624,18 @@ export default function App() {
     connection.on("GameStarted", (gameId: string, assignedColor: string) => {
       setMultiplayerId(gameId);
       setSearchingMatch(false);
+      setOpponentWantsRematch(false);
+      setRematchRequested(false);
       setPlayerColor(assignedColor === "white" ? "w" : "b");
       handleReset();
+    });
+
+    connection.on("GameOver", (winner: string) => {
+      console.log("Server Game Over:", winner);
+    });
+
+    connection.on("OpponentWantsRematch", () => {
+      setOpponentWantsRematch(true);
     });
 
     connection.on("ReceiveMove", (moveStr: string) => {
@@ -860,6 +872,13 @@ export default function App() {
     }
   };
 
+  const handleRequestRematch = () => {
+    if (hubConnectionRef.current && multiplayerId) {
+      setRematchRequested(true);
+      hubConnectionRef.current.invoke("RequestRematch", multiplayerId);
+    }
+  };
+
   const handleModeChange = (newMode: ExtendedGameMode) => {
     if (newMode === "multiplayer") {
       setPlayerColor("w"); // Default until game starts
@@ -867,6 +886,8 @@ export default function App() {
     setGameMode(newMode);
     setMultiplayerId(null);
     setSearchingMatch(false);
+    setRematchRequested(false);
+    setOpponentWantsRematch(false);
     handleReset();
   };
 
@@ -956,6 +977,40 @@ export default function App() {
             onFindGame={handleFindGame}
             onReset={handleReset}
           />
+
+          {isMultiplayerMode && status.result && (
+            <div
+              className="card"
+              style={{
+                textAlign: "center",
+                border: "1px solid var(--amber)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+              }}
+            >
+              <p className="card-label">Game Over</p>
+              {opponentWantsRematch && (
+                <p style={{ fontSize: "0.8rem", color: "var(--amber-hi)" }}>
+                  Opponent wants a rematch!
+                </p>
+              )}
+              <button
+                type="button"
+                className="btn btn-accent"
+                style={{ width: "100%" }}
+                onClick={handleRequestRematch}
+                disabled={rematchRequested}
+              >
+                {rematchRequested
+                  ? "Waiting..."
+                  : opponentWantsRematch
+                    ? "Accept Rematch"
+                    : "Request Rematch"}
+              </button>
+            </div>
+          )}
+
           <GameInfo
             state={state}
             status={status}

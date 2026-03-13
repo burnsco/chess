@@ -1,34 +1,57 @@
 using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
+using ChessDotNet;
 
 namespace Backend.Hubs;
+
+public class GameSession
+{
+    public string GameId { get; set; } = string.Empty;
+    public string WhitePlayerId { get; set; } = string.Empty;
+    public string BlackPlayerId { get; set; } = string.Empty;
+    public ChessGame Game { get; set; } = new ChessGame();
+    public bool WhiteWantsRematch { get; set; } = false;
+    public bool BlackWantsRematch { get; set; } = false;
+
+    public void Reset()
+    {
+        Game = new ChessGame();
+        WhiteWantsRematch = false;
+        BlackWantsRematch = false;
+    }
+}
 
 public class GameHub : Hub
 {
     private static readonly ConcurrentQueue<string> _waitingPlayers = new();
-    private static readonly ConcurrentDictionary<string, string> _playerToGame = new();
+    private static readonly ConcurrentDictionary<string, GameSession> _activeGames = new();
+    private static readonly ConcurrentDictionary<string, string> _playerToGameId = new();
 
     public async Task FindGame()
     {
         var playerId = Context.ConnectionId;
 
-        // Prevent duplicate queuing
-        if (_waitingPlayers.Contains(playerId))
-            return;
+        if (_waitingPlayers.Contains(playerId)) return;
 
         if (_waitingPlayers.TryDequeue(out var opponentId))
         {
             var gameId = Guid.NewGuid().ToString();
-            _playerToGame[playerId] = gameId;
-            _playerToGame[opponentId] = gameId;
+            var session = new GameSession
+            {
+                GameId = gameId,
+                WhitePlayerId = opponentId, // First in queue gets White
+                BlackPlayerId = playerId
+            };
+
+            _activeGames[gameId] = session;
+            _playerToGameId[playerId] = gameId;
+            _playerToGameId[opponentId] = gameId;
 
             await Groups.AddToGroupAsync(playerId, gameId);
             await Groups.AddToGroupAsync(opponentId, gameId);
 
-            // Notify both players that a game has started
-            // Player who was waiting gets White, new player gets Black
-            await Clients.Client(opponentId).SendAsync("GameStarted", gameId, "white");
-            await Clients.Client(playerId).SendAsync("GameStarted", gameId, "black");
+            await Clients.Client(session.WhitePlayerId).SendAsync("GameStarted", gameId, "white");
+            await Clients.Client(session.BlackPlayerId).SendAsync("GameStarted", gameId, "black");
         }
         else
         {
@@ -37,25 +60,100 @@ public class GameHub : Hub
         }
     }
 
-    public async Task SendMove(string gameId, string move)
+    public async Task SendMove(string gameId, string moveStr)
     {
-        // Broadcast the move to the other player in the game group
-        await Clients.OthersInGroup(gameId).SendAsync("ReceiveMove", move);
+        if (!_activeGames.TryGetValue(gameId, out var session)) return;
+
+        var playerId = Context.ConnectionId;
+        var playerColor = playerId == session.WhitePlayerId ? Player.White : Player.Black;
+
+        // Validation: Is it the player's turn?
+        if (session.Game.WhoseTurn != playerColor) return;
+
+        // Parse and validate the move (e.g., "e2e4" or "e7e8Q")
+        var move = ParseMove(moveStr, playerColor);
+        if (move == null) return;
+
+        var moveType = session.Game.IsValidMove(move);
+        if (moveType == MoveType.Invalid) return;
+
+        // Apply move on server
+        session.Game.MakeMove(move, true);
+
+        // Broadcast to other player
+        await Clients.OthersInGroup(gameId).SendAsync("ReceiveMove", moveStr);
+
+        // Check for Game Over
+        if (session.Game.IsCheckmated(Player.White) || session.Game.IsCheckmated(Player.Black) || 
+            session.Game.IsStalemated(Player.White) || session.Game.IsStalemated(Player.Black))
+        {
+            var winner = session.Game.IsCheckmated(Player.Black) ? "white" : 
+                         session.Game.IsCheckmated(Player.White) ? "black" : "draw";
+            await Clients.Group(gameId).SendAsync("GameOver", winner);
+        }
+    }
+
+    public async Task RequestRematch(string gameId)
+    {
+        if (!_activeGames.TryGetValue(gameId, out var session)) return;
+
+        var playerId = Context.ConnectionId;
+        if (playerId == session.WhitePlayerId) session.WhiteWantsRematch = true;
+        if (playerId == session.BlackPlayerId) session.BlackWantsRematch = true;
+
+        if (session.WhiteWantsRematch && session.BlackWantsRematch)
+        {
+            // Swap colors for rematch
+            var oldWhite = session.WhitePlayerId;
+            session.WhitePlayerId = session.BlackPlayerId;
+            session.BlackPlayerId = oldWhite;
+            session.Reset();
+
+            await Clients.Client(session.WhitePlayerId).SendAsync("GameStarted", gameId, "white");
+            await Clients.Client(session.BlackPlayerId).SendAsync("GameStarted", gameId, "black");
+        }
+        else
+        {
+            await Clients.OthersInGroup(gameId).SendAsync("OpponentWantsRematch");
+        }
+    }
+
+    private Move? ParseMove(string moveStr, Player player)
+    {
+        try 
+        {
+            var from = moveStr.Substring(0, 2);
+            var to = moveStr.Substring(2, 2);
+            var promChar = moveStr.Length > 4 ? moveStr[4] : (char?)null;
+
+            var promotion = promChar switch
+            {
+                'q' => 'Q',
+                'r' => 'R',
+                'b' => 'B',
+                'n' => 'N',
+                _ => (char?)null
+            };
+
+            return new Move(from, to, player, promotion);
+        }
+        catch { return null; }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        // Simple cleanup: remove from queue if they leave
-        // (In a real app, you'd also notify the opponent)
         var playerId = Context.ConnectionId;
-        
-        // Remove from queue if present (filtering logic for ConcurrentQueue is limited)
-        // For now, we'll just handle it if they were in a game.
-        if (_playerToGame.TryRemove(playerId, out var gameId))
+        if (_playerToGameId.TryRemove(playerId, out var gameId))
         {
-            await Clients.OthersInGroup(gameId).SendAsync("OpponentDisconnected");
+            if (_activeGames.TryRemove(gameId, out var session))
+            {
+                var otherPlayerId = playerId == session.WhitePlayerId ? session.BlackPlayerId : session.WhitePlayerId;
+                _playerToGameId.TryRemove(otherPlayerId, out _);
+                await Clients.Client(otherPlayerId).SendAsync("OpponentDisconnected");
+            }
         }
-
+        // Cleanup wait queue
+        // (Simplified for demo)
         await base.OnDisconnectedAsync(exception);
     }
 }

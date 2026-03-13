@@ -5,6 +5,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 ---
 
 ## 🚩 Milestone 1: Core Stability & Integrity
+
 *Goal: Ensure games are fair, stable, and resilient to network issues.*
 
 - [ ] **Server-Side Move Validation**: Move the logic from `ChessGame.ts` to the C# backend (or a shared library) to prevent players from sending illegal moves via console.
@@ -13,6 +14,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 - [ ] **Anti-Cheat Lite**: Detect impossible move speeds or multiple sessions from the same IP.
 
 ## 🚩 Milestone 2: The "Real-Time" Experience
+
 *Goal: Make the game feel "alive" and urgent.*
 
 - [ ] **Chess Clocks**: Implement Blitz (3m), Rapid (10m), and Classical (30m) timers synced via SignalR.
@@ -21,6 +23,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 - [ ] **Emoji Reactions**: Quick-tap reactions (👏, 😮, 😠, 💡) that appear over the board.
 
 ## 🚩 Milestone 3: Identity & Persistence
+
 *Goal: Give players a reason to return.*
 
 - [ ] **User Accounts**: Authentication using ASP.NET Core Identity (JWT).
@@ -29,6 +32,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 - [ ] **User Profiles**: Custom avatars, win/loss ratios, and "Member Since" badges.
 
 ## 🚩 Milestone 4: Competitive & Social
+
 *Goal: Build a community and a sense of progression.*
 
 - [ ] **ELO Rating System**: Implement a Glicko-2 or ELO ranking system to track player skill.
@@ -38,6 +42,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 - [ ] **Spectator Mode**: Allow users to watch high-rated matches in real-time.
 
 ## 🚩 Milestone 5: Advanced Analytics
+
 *Goal: Help players get better.*
 
 - [ ] **Server-Side AI Analysis**: After a game ends, use Stockfish on the backend to identify "Blunders", "Mistakes", and "Brilliant" moves.
@@ -47,6 +52,7 @@ This document outlines the planned progression for the multiplayer chess platfor
 ---
 
 ## 🛠 Tech Stack Considerations
+
 - **Database**: PostgreSQL (for users/history).
 - **Caching**: Redis (for active game state and matchmaking).
 - **Communication**: SignalR (WebSockets).
