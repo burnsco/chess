@@ -10,7 +10,7 @@ on:
 jobs:
   backend:
     name: Backend CI
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     if: github.repository_owner == 'corey-burns-dev'
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
         
   frontend:
     name: Frontend CI
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     if: github.repository_owner == 'corey-burns-dev'
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
   publish:
     name: Publish to GHCR
     needs: [backend, frontend]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && github.repository_owner == 'corey-burns-dev'
     permissions:
       contents: read
