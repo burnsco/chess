@@ -1,0 +1,9 @@
+bin
+obj
+.git
+.gitignore
+Dockerfile
+.dockerignore
+Properties
+appsettings.Development.json
+Backend.http

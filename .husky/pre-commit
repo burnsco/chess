@@ -1,1 +1,1 @@
-bun x lint-staged
+cd frontend && bun x lint-staged
