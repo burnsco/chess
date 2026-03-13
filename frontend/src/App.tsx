@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as signalR from "@microsoft/signalr";
 import { AI_DIFFICULTY_SETTINGS, AI_MOVE_DELAY_MS } from "./ai/config";
 import { parseUciMove } from "./ai/uci";
 import { ChessBoard } from "./components/ChessBoard";
@@ -19,6 +20,8 @@ import { PIECE_SYMBOLS, oppositeColor } from "./engine/board";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+type ExtendedGameMode = GameMode | "multiplayer";
+
 interface PromotionRequest {
   from: number;
   to: number;
@@ -29,6 +32,7 @@ interface PromotionRequest {
 
 const PROMOTION_ORDER: PieceType[] = ["q", "r", "b", "n"];
 const MOVE_SOUND_SRC = "/sounds/chess-move.mp3";
+const BACKEND_URL = "http://localhost:5000";
 
 const PIECE_VALUES: Record<PieceType, number> = {
   p: 1,
@@ -77,9 +81,12 @@ function formatClaimableDraws(reasons: GameStatus["claimableDraws"]): string {
   return reasons.map((reason) => formatReason(reason)).join(" or ");
 }
 
-function playerLabel(color: Color, mode: GameMode, humanColor: Color): string {
-  if (mode !== "ai") {
+function playerLabel(color: Color, mode: ExtendedGameMode, humanColor: Color): string {
+  if (mode === "human") {
     return colorName(color);
+  }
+  if (mode === "multiplayer") {
+    return color === humanColor ? `${colorName(color)} · You` : `${colorName(color)} · Opponent`;
   }
 
   return color === humanColor ? `${colorName(color)} · You` : `${colorName(color)} · AI`;
@@ -152,16 +159,19 @@ function PlayerBar({
 }
 
 interface AIControlsProps {
-  mode: GameMode;
+  mode: ExtendedGameMode;
   playerColor: Color;
   difficulty: AIDifficulty;
   aiColor: Color;
   aiReady: boolean;
   aiThinking: boolean;
   aiError: string | null;
-  onModeChange: (mode: GameMode) => void;
+  searchingMatch: boolean;
+  multiplayerId: string | null;
+  onModeChange: (mode: ExtendedGameMode) => void;
   onPlayerColorChange: (color: Color) => void;
   onDifficultyChange: (difficulty: AIDifficulty) => void;
+  onFindGame: () => void;
   onReset: () => void;
 }
 
@@ -173,21 +183,30 @@ function AIControls({
   aiReady,
   aiThinking,
   aiError,
+  searchingMatch,
+  multiplayerId,
   onModeChange,
   onPlayerColorChange,
   onDifficultyChange,
+  onFindGame,
   onReset,
 }: AIControlsProps) {
   const statusText =
-    mode !== "ai"
+    mode === "human"
       ? "Pass-and-play mode."
-      : aiThinking
-        ? aiReady
-          ? "AI thinking..."
-          : "Loading AI..."
-        : aiReady
-          ? `AI plays ${colorName(aiColor)}.`
-          : "AI will load on demand.";
+      : mode === "multiplayer"
+        ? multiplayerId
+          ? "Connected to opponent."
+          : searchingMatch
+            ? "Searching for opponent..."
+            : "Click 'Find Game' to start."
+        : aiThinking
+          ? aiReady
+            ? "AI thinking..."
+            : "Loading AI..."
+          : aiReady
+            ? `AI plays ${colorName(aiColor)}.`
+            : "AI will load on demand.";
 
   return (
     <div className="card">
@@ -198,18 +217,25 @@ function AIControls({
           className={`segment${mode === "human" ? " segment--active" : ""}`}
           onClick={() => onModeChange("human")}
         >
-          Human vs Human
+          Local
         </button>
         <button
           type="button"
           className={`segment${mode === "ai" ? " segment--active" : ""}`}
           onClick={() => onModeChange("ai")}
         >
-          Human vs AI
+          AI
+        </button>
+        <button
+          type="button"
+          className={`segment${mode === "multiplayer" ? " segment--active" : ""}`}
+          onClick={() => onModeChange("multiplayer")}
+        >
+          Online
         </button>
       </div>
 
-      {mode === "ai" ? (
+      {mode === "ai" && (
         <>
           <div className="control-group">
             <span className="control-label">Play as</span>
@@ -250,26 +276,39 @@ function AIControls({
               ))}
             </div>
           </div>
-
-          <div
-            className={`engine-status${aiThinking ? " engine-status--thinking" : ""}`}
-            role="status"
-            aria-live="polite"
-          >
-            <span
-              className={`engine-dot${aiThinking ? " engine-dot--thinking" : ""}`}
-              aria-hidden="true"
-            />
-            <span>{statusText}</span>
-          </div>
-
-          {aiError ? <p className="engine-error">{aiError}</p> : null}
-
-          <button type="button" className="btn btn-ghost control-reset" onClick={onReset}>
-            New AI game
-          </button>
         </>
-      ) : null}
+      )}
+
+      {mode === "multiplayer" && !multiplayerId && (
+        <button
+          type="button"
+          className="btn btn-accent find-game-btn"
+          onClick={onFindGame}
+          disabled={searchingMatch}
+        >
+          {searchingMatch ? "Searching..." : "Find Game"}
+        </button>
+      )}
+
+      <div
+        className={`engine-status${aiThinking || searchingMatch ? " engine-status--thinking" : ""}`}
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          className={`engine-dot${aiThinking || searchingMatch ? " engine-dot--thinking" : ""}`}
+          aria-hidden="true"
+        />
+        <span>{statusText}</span>
+      </div>
+
+      {aiError ? <p className="engine-error">{aiError}</p> : null}
+
+      {mode !== "multiplayer" && (
+        <button type="button" className="btn btn-ghost control-reset" onClick={onReset}>
+          New game
+        </button>
+      )}
     </div>
   );
 }
@@ -398,17 +437,22 @@ export default function App() {
   const aiRequestTokenRef = useRef(0);
   const aiPreparedGameRef = useRef<number | null>(null);
   const moveSoundRef = useRef<HTMLAudioElement | null>(null);
+  const hubConnectionRef = useRef<signalR.HubConnection | null>(null);
+
   const [, setVersion] = useState(0);
   const [gameSession, setGameSession] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [dragSource, setDragSource] = useState<number | null>(null);
   const [promotionRequest, setPromotionRequest] = useState<PromotionRequest | null>(null);
-  const [gameMode, setGameMode] = useState<GameMode>("human");
+  const [gameMode, setGameMode] = useState<ExtendedGameMode>("human");
   const [playerColor, setPlayerColor] = useState<Color>("w");
   const [aiThinking, setAiThinking] = useState(false);
   const [aiReady, setAiReady] = useState(false);
   const [aiDifficulty, setAiDifficulty] = useState<AIDifficulty>("medium");
   const [aiError, setAiError] = useState<string | null>(null);
+
+  const [searchingMatch, setSearchingMatch] = useState(false);
+  const [multiplayerId, setMultiplayerId] = useState<string | null>(null);
 
   const game = gameRef.current;
   const state = game.getState();
@@ -418,9 +462,15 @@ export default function App() {
   const selectableMoves = selectedSquare === null ? [] : game.getLegalMovesFrom(selectedSquare);
   const aiColor = oppositeColor(playerColor);
   const isAiMode = gameMode === "ai";
+  const isMultiplayerMode = gameMode === "multiplayer";
   const isAiTurn = isAiMode && state.sideToMove === aiColor;
+  const isOpponentTurn = isMultiplayerMode && state.sideToMove !== playerColor;
   const boardLocked = Boolean(
-    promotionRequest || status.result || (isAiMode && isAiTurn) || aiThinking,
+    promotionRequest ||
+    status.result ||
+    (isAiMode && isAiTurn) ||
+    (isMultiplayerMode && (!multiplayerId || isOpponentTurn)) ||
+    aiThinking,
   );
 
   const whiteScore = materialScore(state.capturedPieces.b);
@@ -466,10 +516,22 @@ export default function App() {
     setPromotionRequest(null);
   };
 
-  const finalizeMove = () => {
+  const finalizeMove = (sendToHub = true) => {
     clearSelection();
     playMoveSound();
     refresh();
+
+    if (sendToHub && isMultiplayerMode && multiplayerId) {
+      const lastMove = game.getMoveHistory().at(-1);
+      if (lastMove) {
+        // Simple string representation of move for now: e2e4 or e7e8q
+        const moveStr =
+          indexToAlgebraic(lastMove.move.from) +
+          indexToAlgebraic(lastMove.move.to) +
+          (lastMove.move.promotion || "");
+        hubConnectionRef.current?.invoke("SendMove", multiplayerId, moveStr);
+      }
+    }
   };
 
   const cancelAI = (dispose = false) => {
@@ -510,6 +572,56 @@ export default function App() {
     }
     return moved;
   };
+
+  // SignalR setup
+  useEffect(() => {
+    const connection = new signalR.HubConnectionBuilder()
+      .withUrl(`${BACKEND_URL}/gamehub`)
+      .withAutomaticReconnect()
+      .build();
+
+    connection.on("WaitingForOpponent", () => {
+      setSearchingMatch(true);
+    });
+
+    connection.on("GameStarted", (gameId: string, assignedColor: string) => {
+      setMultiplayerId(gameId);
+      setSearchingMatch(false);
+      setPlayerColor(assignedColor === "white" ? "w" : "b");
+      handleReset();
+    });
+
+    connection.on("ReceiveMove", (moveStr: string) => {
+      // Basic UCI parser for receive move
+      const from = moveStr.slice(0, 2);
+      const to = moveStr.slice(2, 4);
+      const prom = moveStr[4] as PieceType | undefined;
+
+      const fromIdx = (8 - Number.parseInt(from[1])) * 8 + (from.charCodeAt(0) - 97);
+      const toIdx = (8 - Number.parseInt(to[1])) * 8 + (to.charCodeAt(0) - 97);
+
+      if (game.move(fromIdx, toIdx, prom)) {
+        finalizeMove(false);
+      }
+    });
+
+    connection.on("OpponentDisconnected", () => {
+      alert("Opponent disconnected.");
+      setMultiplayerId(null);
+      setGameMode("human");
+    });
+
+    connection
+      .start()
+      .then(() => {
+        hubConnectionRef.current = connection;
+      })
+      .catch((err) => console.error("SignalR Connection Error: ", err));
+
+    return () => {
+      connection.stop();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -676,6 +788,7 @@ export default function App() {
   };
 
   const handleUndo = () => {
+    if (isMultiplayerMode) return; // Disable undo in multiplayer
     cancelAI();
 
     if (!game.undo()) {
@@ -706,6 +819,22 @@ export default function App() {
     }
   };
 
+  const handleFindGame = () => {
+    if (hubConnectionRef.current) {
+      hubConnectionRef.current.invoke("FindGame");
+    }
+  };
+
+  const handleModeChange = (newMode: ExtendedGameMode) => {
+    if (newMode === "multiplayer") {
+      setPlayerColor("w"); // Default until game starts
+    }
+    setGameMode(newMode);
+    setMultiplayerId(null);
+    setSearchingMatch(false);
+    handleReset();
+  };
+
   return (
     <div className="app-shell">
       {/* Header */}
@@ -722,11 +851,16 @@ export default function App() {
             type="button"
             className="btn btn-ghost"
             onClick={handleUndo}
-            disabled={moveHistory.length === 0 || aiThinking || isAiTurn}
+            disabled={moveHistory.length === 0 || aiThinking || isAiTurn || isMultiplayerMode}
           >
             ↩ Undo
           </button>
-          <button type="button" className="btn btn-accent" onClick={handleReset}>
+          <button
+            type="button"
+            className="btn btn-accent"
+            onClick={handleReset}
+            disabled={isMultiplayerMode}
+          >
             New game
           </button>
         </div>
@@ -752,7 +886,7 @@ export default function App() {
             legalMoves={selectableMoves}
             inCheck={status.inCheck}
             interactionDisabled={boardLocked}
-            perspective={isAiMode ? playerColor : "w"}
+            perspective={playerColor}
             onSquareClick={handleSquareClick}
             onPieceDragStart={handlePieceDragStart}
             onPieceDrop={handlePieceDrop}
@@ -779,9 +913,12 @@ export default function App() {
             aiReady={aiReady}
             aiThinking={aiThinking}
             aiError={aiError}
-            onModeChange={setGameMode}
+            searchingMatch={searchingMatch}
+            multiplayerId={multiplayerId}
+            onModeChange={handleModeChange}
             onPlayerColorChange={setPlayerColor}
             onDifficultyChange={setAiDifficulty}
+            onFindGame={handleFindGame}
             onReset={handleReset}
           />
           <GameInfo

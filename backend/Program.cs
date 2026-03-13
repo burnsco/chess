@@ -3,14 +3,16 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
 
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins("http://localhost:3000") // Frontend address
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for SignalR
     });
 });
 
@@ -24,6 +26,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 // app.UseHttpsRedirection(); // Disabled for docker/local dev simplicity
+
+app.MapHub<Backend.Hubs.GameHub>("/gamehub");
 
 var summaries = new[]
 {
