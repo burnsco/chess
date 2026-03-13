@@ -7,6 +7,8 @@ frontend/*.local
 # Backend
 backend/bin/
 backend/obj/
+Backend.Tests/bin/
+Backend.Tests/obj/
 backend/appsettings.Development.json
 backend/Properties/launchSettings.json
 

@@ -11,6 +11,7 @@ CMD ["bun", "run", "dev"]
 
 # --- Build Stage ---
 FROM development AS build
+LABEL org.opencontainers.image.source="https://github.com/burnsco/chess"
 RUN bun run build
 
 # --- Production Stage ---
