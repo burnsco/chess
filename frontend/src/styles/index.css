@@ -504,7 +504,7 @@ button {
 .piece {
   position: relative;
   z-index: 2;
-  font-size: clamp(1.2rem, 4.2vw, 2.6rem);
+  font-size: clamp(2.2rem, 11vw, 4.4rem);
   line-height: 1;
   user-select: none;
   transition: transform 80ms ease;
