@@ -37,6 +37,19 @@ export class StockfishManager {
     }
 
     this.worker = createStockfishWorker();
+
+    // Catch early worker script load errors.
+    this.worker.onerror = (e) => {
+      console.error(
+        "Stockfish: Worker .onerror triggered:",
+        e.message,
+        "at",
+        e.filename,
+        ":",
+        e.lineno,
+      );
+    };
+
     console.log("Stockfish: Worker created. crossOriginIsolated =", window.crossOriginIsolated);
     this.startupMessages = [];
     this.readyPromise = new Promise<void>((resolve, reject) => {
