@@ -1,10 +1,9 @@
 export function createStockfishWorker(): Worker {
   const origin = globalThis.location.origin;
-  const scriptUrl = `${origin}/engine/engine.js`;
-
-  // Using a relative filename in the hash: #engine.wasm,worker
-  // The stockfish.js internal locateFile logic will prepend the script's directory.
-  const workerUrl = `${scriptUrl}#engine.wasm,worker`;
+  // Rename the files back to their original names in the public/ folder.
+  // We use the hash #,worker to force worker mode and let the script find stockfish.wasm by itself.
+  const scriptUrl = `${origin}/engine/stockfish.js`;
+  const workerUrl = `${scriptUrl}#,worker`;
 
   console.log("Creating Stockfish worker at:", workerUrl);
 

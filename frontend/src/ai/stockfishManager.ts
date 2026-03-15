@@ -69,6 +69,9 @@ export class StockfishManager {
       };
 
       this.worker?.addEventListener("error", handleWorkerError);
+      this.worker?.addEventListener("messageerror", (event: MessageEvent) => {
+        console.error("Stockfish worker messageerror:", event);
+      });
       this.worker?.addEventListener("message", this.handleWorkerMessage);
 
       this.readyWaiters.push({
