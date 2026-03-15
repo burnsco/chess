@@ -11,6 +11,7 @@ export default defineConfig({
       // Required for Stockfish WASM (SharedArrayBuffer) — must match nginx.conf
       "Cross-Origin-Embedder-Policy": "require-corp",
       "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   },
   test: {
