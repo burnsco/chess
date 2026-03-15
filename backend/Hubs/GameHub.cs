@@ -30,6 +30,23 @@ public class GameHub : Hub
     private static readonly ConcurrentDictionary<string, GameSession> _activeGames = new();
     private static readonly ConcurrentDictionary<string, string> _playerToGameId = new();
 
+    
+    public async Task RecoverSession(string gameId, string colorStr)
+    {
+        var playerId = Context.ConnectionId;
+        if (!_activeGames.TryGetValue(gameId, out var session))
+        {
+            session = new GameSession { GameId = gameId };
+            _activeGames[gameId] = session;
+        }
+
+        if (colorStr == "white") session.WhitePlayerId = playerId;
+        else if (colorStr == "black") session.BlackPlayerId = playerId;
+
+        _playerToGameId[playerId] = gameId;
+        await Groups.AddToGroupAsync(playerId, gameId);
+    }
+
     public async Task FindGame()
     {
         var playerId = Context.ConnectionId;

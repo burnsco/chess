@@ -9,6 +9,7 @@ services:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
       - ./frontend/package.json:/app/package.json
+      - ./frontend/tests:/app/tests
     environment:
       - CHOKIDAR_USEPOLLING=true # Helps with hot reload in Docker
     depends_on:

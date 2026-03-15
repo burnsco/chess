@@ -1,5 +1,5 @@
 # --- Build/Dev Base ---
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS base
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS base
 WORKDIR /app
 
 # Install Stockfish for development
@@ -24,7 +24,7 @@ LABEL org.opencontainers.image.source="https://github.com/burnsco/chess"
 RUN dotnet publish "Backend.csproj" -c Release -o /app/publish /p:UseAppHost=false /p:AllowMissingPrunePackageData=true
 
 # --- Runtime Stage ---
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS production
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS production
 WORKDIR /app
 
 # Install Stockfish for production

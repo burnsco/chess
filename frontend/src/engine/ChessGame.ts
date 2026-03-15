@@ -248,6 +248,9 @@ export class ChessGame {
   }
 
   toFen(state: ChessState = this.state): string {
+    // Note: The board array maps 0 to a8, and 63 to h1.
+    // rank=0 iterates over a8..h8 (the 8th rank), which correctly matches FEN's requirement
+    // to output rank 8 first. Thus, rank=0 corresponds to FEN's first row.
     const rows: string[] = [];
 
     for (let rank = 0; rank < 8; rank += 1) {
@@ -399,6 +402,8 @@ export class ChessGame {
       const knightCount = allMinors.filter(({ piece }) => piece.type === "n").length;
 
       if (knightCount === 2) {
+        // KNN vs K is not necessarily a dead position under FIDE rules,
+        // but it is considered insufficient material when both knights are of the same color
         return whiteMinors.length === 2 || blackMinors.length === 2;
       }
 

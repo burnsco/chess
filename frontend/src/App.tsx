@@ -15,7 +15,7 @@ import type {
   Piece,
   PieceType,
 } from "./engine/types";
-import { PIECE_SYMBOLS, oppositeColor } from "./engine/board";
+import { PIECE_SYMBOLS, oppositeColor, algebraicToIndex } from "./engine/board";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ interface AIControlsProps {
   playerColor: Color;
   difficulty: AIDifficulty;
   aiColor: Color;
-  aiReady: boolean;
+
   aiThinking: boolean;
   aiError: string | null;
   searchingMatch: boolean;
@@ -182,7 +182,6 @@ function AIControls({
   playerColor,
   difficulty,
   aiColor,
-  aiReady,
   aiThinking,
   aiError,
   searchingMatch,
@@ -203,12 +202,8 @@ function AIControls({
             ? "Searching for opponent..."
             : "Click 'Find Game' to start."
         : aiThinking
-          ? aiReady
-            ? "AI thinking..."
-            : "Loading AI..."
-          : aiReady
-            ? `AI plays ${colorName(aiColor)}.`
-            : "AI will load on demand.";
+          ? "AI thinking..."
+          : `AI plays ${colorName(aiColor)}.`;
 
   return (
     <div className="card">
@@ -447,7 +442,7 @@ export default function App() {
   const [gameMode, setGameMode] = useState<ExtendedGameMode>("human");
   const [playerColor, setPlayerColor] = useState<Color>("w");
   const [aiThinking, setAiThinking] = useState(false);
-  const [aiReady] = useState(true);
+
   const [aiDifficulty, setAiDifficulty] = useState<AIDifficulty>("medium");
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -471,7 +466,10 @@ export default function App() {
     promotionRequest ||
     status.result ||
     (isAiMode && isAiTurn) ||
-    (isMultiplayerMode && (!multiplayerId || isOpponentTurn)) ||
+    (isMultiplayerMode &&
+      (!multiplayerId ||
+        isOpponentTurn ||
+        hubConnectionRef.current?.state !== signalR.HubConnectionState.Connected)) ||
     aiThinking,
   );
 
@@ -612,7 +610,14 @@ export default function App() {
       setOpponentWantsRematch(false);
       setRematchRequested(false);
       setPlayerColor(assignedColor === "white" ? "w" : "b");
-      handleReset();
+      aiRequestTokenRef.current += 1;
+      setAiThinking(false);
+      gameRef.current.reset();
+      setGameSession((session) => session + 1);
+      setSelectedSquare(null);
+      setDragSource(null);
+      setPromotionRequest(null);
+      setVersion((v) => v + 1);
     });
 
     connection.on("GameOver", (winner: string) => {
@@ -628,8 +633,8 @@ export default function App() {
       const to = moveStr.slice(2, 4);
       const prom = moveStr[4] as PieceType | undefined;
 
-      const fromIdx = (8 - Number.parseInt(from[1])) * 8 + (from.charCodeAt(0) - 97);
-      const toIdx = (8 - Number.parseInt(to[1])) * 8 + (to.charCodeAt(0) - 97);
+      const fromIdx = algebraicToIndex(from);
+      const toIdx = algebraicToIndex(to);
 
       // Pass false so finalizeMove doesn't echo the move back to the hub
       if (game.move(fromIdx, toIdx, prom)) {
@@ -937,7 +942,6 @@ export default function App() {
             playerColor={playerColor}
             difficulty={aiDifficulty}
             aiColor={aiColor}
-            aiReady={aiReady}
             aiThinking={aiThinking}
             aiError={aiError}
             searchingMatch={searchingMatch}
