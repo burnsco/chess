@@ -613,9 +613,15 @@ export default function App() {
     return moved;
   };
 
-  // SignalR setup
+  // SignalR: only connect when the user enters multiplayer mode.
+  // Connecting eagerly on mount causes spurious errors and retry loops
+  // when the backend isn't running (e.g. local/AI-only sessions).
   useEffect(() => {
-    if (gameMode !== "multiplayer") return;
+    if (gameMode !== "multiplayer") {
+      // Leaving multiplayer — clear hub ref so stale invocations don't fire
+      hubConnectionRef.current = null;
+      return;
+    }
 
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(`${BACKEND_URL}/gamehub`)
@@ -644,7 +650,6 @@ export default function App() {
     });
 
     connection.on("ReceiveMove", (moveStr: string) => {
-      // Basic UCI parser for receive move
       const from = moveStr.slice(0, 2);
       const to = moveStr.slice(2, 4);
       const prom = moveStr[4] as PieceType | undefined;
@@ -652,6 +657,7 @@ export default function App() {
       const fromIdx = (8 - Number.parseInt(from[1])) * 8 + (from.charCodeAt(0) - 97);
       const toIdx = (8 - Number.parseInt(to[1])) * 8 + (to.charCodeAt(0) - 97);
 
+      // Pass false so finalizeMove doesn't echo the move back to the hub
       if (game.move(fromIdx, toIdx, prom)) {
         finalizeMove(false);
       }
@@ -671,8 +677,8 @@ export default function App() {
       .catch((err) => console.error("SignalR Connection Error: ", err));
 
     return () => {
-      connection.stop();
       hubConnectionRef.current = null;
+      connection.stop();
     };
   }, [gameMode]);
 

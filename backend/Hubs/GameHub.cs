@@ -23,6 +23,8 @@ public class GameSession
 
 public class GameHub : Hub
 {
+    // Track waiting players as a set for O(1) membership checks and safe removal on disconnect.
+    // The queue provides FIFO ordering; the set provides fast existence checks and atomic add.
     private static readonly ConcurrentDictionary<string, byte> _waitingSet = new();
     private static readonly ConcurrentQueue<string> _waitingQueue = new();
     private static readonly ConcurrentDictionary<string, GameSession> _activeGames = new();
@@ -32,12 +34,21 @@ public class GameHub : Hub
     {
         var playerId = Context.ConnectionId;
 
+        // Atomic add-or-skip: prevents a player from entering the queue twice
         if (!_waitingSet.TryAdd(playerId, 0)) return;
 
+        // Try to dequeue an opponent. Skip any stale entries (players who disconnected
+        // while waiting — they were removed from _waitingSet in OnDisconnectedAsync).
         while (_waitingQueue.TryDequeue(out var opponentId))
         {
-            if (!_waitingSet.TryRemove(opponentId, out _)) continue;
+            // Check if this opponent is still connected and waiting
+            if (!_waitingSet.TryRemove(opponentId, out _))
+            {
+                // Ghost entry — opponent disconnected while queued; try the next one
+                continue;
+            }
 
+            // Remove the current player from waiting now that we have a match
             _waitingSet.TryRemove(playerId, out _);
 
             var gameId = Guid.NewGuid().ToString();
@@ -60,6 +71,7 @@ public class GameHub : Hub
             return;
         }
 
+        // No live opponent found — enqueue and wait
         _waitingQueue.Enqueue(playerId);
         await Clients.Caller.SendAsync("WaitingForOpponent");
     }
@@ -81,17 +93,16 @@ public class GameHub : Hub
         var isValid = session.Game.IsValidMove(move);
         if (!isValid) return;
 
-        // Apply move on server
         session.Game.MakeMove(move, true);
 
-        // Broadcast to other player
+        // Broadcast validated move to the opponent
         await Clients.OthersInGroup(gameId).SendAsync("ReceiveMove", moveStr);
 
-        // Check for Game Over
-        if (session.Game.IsCheckmated(Player.White) || session.Game.IsCheckmated(Player.Black) || 
+        // Check for game over conditions
+        if (session.Game.IsCheckmated(Player.White) || session.Game.IsCheckmated(Player.Black) ||
             session.Game.IsStalemated(Player.White) || session.Game.IsStalemated(Player.Black))
         {
-            var winner = session.Game.IsCheckmated(Player.Black) ? "white" : 
+            var winner = session.Game.IsCheckmated(Player.Black) ? "white" :
                          session.Game.IsCheckmated(Player.White) ? "black" : "draw";
             await Clients.Group(gameId).SendAsync("GameOver", winner);
         }
@@ -124,7 +135,7 @@ public class GameHub : Hub
 
     private Move? ParseMove(string moveStr, Player player)
     {
-        try 
+        try
         {
             var from = moveStr.Substring(0, 2);
             var to = moveStr.Substring(2, 2);
@@ -148,18 +159,24 @@ public class GameHub : Hub
     {
         var playerId = Context.ConnectionId;
 
-        // Remove from waiting set if queued
+        // Remove from the waiting set. If this player was in the queue but hasn't been
+        // dequeued yet, the next FindGame call will see the set entry is gone and skip them.
         _waitingSet.TryRemove(playerId, out _);
 
+        // Clean up any active game
         if (_playerToGameId.TryRemove(playerId, out var gameId))
         {
             if (_activeGames.TryRemove(gameId, out var session))
             {
-                var otherPlayerId = playerId == session.WhitePlayerId ? session.BlackPlayerId : session.WhitePlayerId;
+                var otherPlayerId = playerId == session.WhitePlayerId
+                    ? session.BlackPlayerId
+                    : session.WhitePlayerId;
+
                 _playerToGameId.TryRemove(otherPlayerId, out _);
                 await Clients.Client(otherPlayerId).SendAsync("OpponentDisconnected");
             }
         }
+
         await base.OnDisconnectedAsync(exception);
     }
 }
