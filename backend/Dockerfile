@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Install Stockfish for development
 RUN apt-get update && apt-get install -y stockfish && rm -rf /var/lib/apt/lists/*
+# Symlink to a standard path
+RUN ln -s /usr/games/stockfish /usr/local/bin/stockfish
 
 COPY ["Backend.csproj", "./"]
 RUN dotnet restore /p:AllowMissingPrunePackageData=true
@@ -27,6 +29,8 @@ WORKDIR /app
 
 # Install Stockfish for production
 RUN apt-get update && apt-get install -y stockfish && rm -rf /var/lib/apt/lists/*
+# Symlink to a standard path
+RUN ln -s /usr/games/stockfish /usr/local/bin/stockfish
 
 COPY --from=build /app/publish .
 EXPOSE 8080

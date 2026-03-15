@@ -11,8 +11,15 @@ namespace Backend.Services
         public StockfishService(ILogger<StockfishService> logger)
         {
             _logger = logger;
-            // Default path for stockfish installed via apt-get
-            _stockfishPath = "stockfish";
+            // Ubuntu/Debian installs stockfish to /usr/games/stockfish
+            if (File.Exists("/usr/games/stockfish"))
+            {
+                _stockfishPath = "/usr/games/stockfish";
+            }
+            else
+            {
+                _stockfishPath = "stockfish";
+            }
         }
 
         public async Task<string?> GetBestMoveAsync(string fen, int skillLevel, int movetimeMs)
@@ -30,28 +37,33 @@ namespace Backend.Services
                 };
 
                 using var process = new Process { StartInfo = startInfo };
+                _logger.LogInformation("Stockfish: Starting process...");
                 process.Start();
 
                 using var writer = process.StandardInput;
                 using var reader = process.StandardOutput;
 
+                _logger.LogInformation("Stockfish >> uci");
                 await writer.WriteLineAsync("uci");
                 
                 // Wait for uciok
                 string? line;
                 while ((line = await reader.ReadLineAsync()) != null)
                 {
+                    _logger.LogInformation("Stockfish << {Line}", line);
                     if (line == "uciok") break;
                 }
 
+                _logger.LogInformation("Stockfish >> setoption name Skill Level value {SkillLevel}", skillLevel);
                 await writer.WriteLineAsync($"setoption name Skill Level value {skillLevel}");
                 await writer.WriteLineAsync($"position fen {fen}");
+                _logger.LogInformation("Stockfish >> go movetime {MovetimeMs}", movetimeMs);
                 await writer.WriteLineAsync($"go movetime {movetimeMs}");
 
                 string? bestMove = null;
                 while ((line = await reader.ReadLineAsync()) != null)
                 {
-                    _logger.LogDebug("Stockfish: {Line}", line);
+                    _logger.LogInformation("Stockfish << {Line}", line);
                     if (line.StartsWith("bestmove"))
                     {
                         var parts = line.Split(' ');
