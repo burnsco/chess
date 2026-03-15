@@ -1,13 +1,11 @@
 export function createStockfishWorker(): Worker {
   const origin = globalThis.location.origin;
-  const scriptUrl = `${origin}/engine/stockfish-18-lite-single.js`;
-  const wasmUrl = `${origin}/engine/stockfish-18-lite-single.wasm`;
+  // Use the ASM.js version which doesn't need WASM.
+  // This is a diagnostic step to see if pure JS workers function correctly.
+  const scriptUrl = `${origin}/engine/stockfish-asm.js`;
+  const workerUrl = `${scriptUrl}#,worker`;
 
-  // Format: script.js#wasm_url,worker
-  // Use explicit full URLs to avoid any relative path ambiguity in different environments.
-  const workerUrl = `${scriptUrl}#${encodeURIComponent(wasmUrl)},worker`;
-
-  console.log("Creating Stockfish worker at:", workerUrl);
+  console.log("Creating Stockfish worker (ASM.js) at:", workerUrl);
 
   return new Worker(workerUrl);
 }
