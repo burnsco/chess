@@ -1,9 +1,13 @@
 export function createStockfishWorker(): Worker {
-  // Use a relative URL which is often more reliable for finding assets in the same folder.
-  // We add #,worker to ensure it starts in worker mode and finds stockfish.wasm.
-  const workerUrl = new URL("/engine/stockfish.js#,worker", globalThis.location.origin);
+  const origin = globalThis.location.origin;
+  const scriptUrl = `${origin}/engine/stockfish-18-lite-single.js`;
+  const wasmUrl = `${origin}/engine/stockfish-18-lite-single.wasm`;
 
-  console.log("Creating Stockfish worker at:", workerUrl.href);
+  // Format: script.js#wasm_url,worker
+  // Use explicit full URLs to avoid any relative path ambiguity in different environments.
+  const workerUrl = `${scriptUrl}#${encodeURIComponent(wasmUrl)},worker`;
+
+  console.log("Creating Stockfish worker at:", workerUrl);
 
   return new Worker(workerUrl);
 }

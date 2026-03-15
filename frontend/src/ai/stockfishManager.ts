@@ -98,10 +98,11 @@ export class StockfishManager {
         },
       });
 
-      console.log("Stockfish: Worker created. Initializing with 'uci' command in 500ms...");
+      console.log("Stockfish: Worker created. Initializing with 'uci' command in 2000ms...");
       window.setTimeout(() => {
+        console.log("Stockfish: Sending initial 'uci' command...");
         this.send("uci");
-      }, 500);
+      }, 2000);
     }).catch((error) => {
       console.error("Stockfish initialization failed:", error);
       this.dispose();
@@ -180,7 +181,7 @@ export class StockfishManager {
 
   private readonly handleWorkerMessage = (event: MessageEvent<string>) => {
     const payload = String(event.data ?? "");
-    console.log("Stockfish <<", payload);
+    console.log("Stockfish RAW <<", payload);
     const lines = payload
       .split(/\r?\n/)
       .map((line) => line.trim())
