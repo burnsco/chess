@@ -34,6 +34,8 @@ app.UseCors();
 
 app.MapHub<Backend.Hubs.GameHub>("/gamehub");
 
+app.MapGet("/api/stats", () => Results.Ok(Backend.Hubs.GameHub.GetLobbyStats()));
+
 // AI endpoint
 app.MapPost("/api/ai/move", async ([FromBody] AiMoveRequest request, StockfishService stockfish) =>
 {

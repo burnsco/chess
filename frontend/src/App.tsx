@@ -27,6 +27,12 @@ interface PromotionRequest {
   options: Move[];
 }
 
+interface MultiplayerStats {
+  activeGames: number;
+  activePlayers: number;
+  waitingPlayers: number;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const PROMOTION_ORDER: PieceType[] = ["q", "r", "b", "n"];
@@ -94,6 +100,29 @@ function playerLabel(color: Color, mode: ExtendedGameMode, humanColor: Color): s
   return color === humanColor ? `${colorName(color)} · You` : `${colorName(color)} · AI`;
 }
 
+function turnStatusLabel(
+  color: Color,
+  mode: ExtendedGameMode,
+  humanColor: Color,
+  sideToMove: Color,
+  aiThinking: boolean,
+): string {
+  if (mode === "human") {
+    return color === sideToMove ? "Move now" : "Waiting";
+  }
+
+  if (color !== sideToMove) {
+    return "Waiting";
+  }
+
+  if (mode === "ai") {
+    if (color === humanColor) return "Your turn";
+    return aiThinking ? "AI thinking" : "AI to move";
+  }
+
+  return color === humanColor ? "Your turn" : "Opponent to move";
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -119,6 +148,7 @@ interface PlayerBarProps {
   isInCheck: boolean;
   isGameOver: boolean;
   isThinking?: boolean;
+  turnLabel: string;
 }
 
 function PlayerBar({
@@ -130,6 +160,7 @@ function PlayerBar({
   isInCheck,
   isGameOver,
   isThinking = false,
+  turnLabel,
 }: PlayerBarProps) {
   const cls = [
     "player-bar",
@@ -151,8 +182,13 @@ function PlayerBar({
         ))}
         {advantage > 0 && <span className="material-adv">+{advantage}</span>}
       </div>
-      {isActiveTurn && !isGameOver && !isInCheck && !isThinking && (
-        <span className="turn-dot" aria-label="Active turn" />
+      {!isGameOver && (
+        <span
+          className={`turn-state${isActiveTurn ? " turn-state--active" : ""}`}
+          aria-label={turnLabel}
+        >
+          {turnLabel}
+        </span>
       )}
       {isInCheck && <span className="check-badge">Check</span>}
       {isThinking && <span className="thinking-badge">Thinking…</span>}
@@ -208,7 +244,7 @@ function AIControls({
   return (
     <div className="card">
       <p className="card-label">Opponent</p>
-      <div className="segmented-control">
+      <div className="segmented-control segmented-control--triple">
         <button
           type="button"
           className={`segment${mode === "human" ? " segment--active" : ""}`}
@@ -306,6 +342,46 @@ function AIControls({
           New game
         </button>
       )}
+    </div>
+  );
+}
+
+interface LobbyStatsCardProps {
+  stats: MultiplayerStats | null;
+  isMultiplayerMode: boolean;
+}
+
+function LobbyStatsCard({ stats, isMultiplayerMode }: LobbyStatsCardProps) {
+  return (
+    <div
+      className={`card card--lobby${isMultiplayerMode ? " card--lobby--active" : ""}`}
+      aria-live="polite"
+    >
+      <div className="card-heading">
+        <p className="card-label">Live lobby</p>
+        <span className="lobby-live-dot" aria-hidden="true" />
+      </div>
+      <p className={`lobby-copy${isMultiplayerMode ? " lobby-copy--active" : ""}`}>
+        {stats
+          ? isMultiplayerMode
+            ? "Currently playing. These numbers update in real time."
+            : "Current lobby activity across all games."
+          : "Loading live lobby status..."}
+      </p>
+      <div className="stat-grid stat-grid--lobby" aria-label="Live multiplayer statistics">
+        <div className="stat-cell stat-cell--lobby">
+          <span className="stat-label">Games</span>
+          <span className="stat-value stat-value--lobby">{stats?.activeGames ?? "—"}</span>
+        </div>
+        <div className="stat-cell stat-cell--lobby">
+          <span className="stat-label">Players</span>
+          <span className="stat-value stat-value--lobby">{stats?.activePlayers ?? "—"}</span>
+        </div>
+        <div className="stat-cell stat-cell--lobby">
+          <span className="stat-label">Waiting</span>
+          <span className="stat-value stat-value--lobby">{stats?.waitingPlayers ?? "—"}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -439,7 +515,7 @@ export default function App() {
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [dragSource, setDragSource] = useState<number | null>(null);
   const [promotionRequest, setPromotionRequest] = useState<PromotionRequest | null>(null);
-  const [gameMode, setGameMode] = useState<ExtendedGameMode>("human");
+  const [gameMode, setGameMode] = useState<ExtendedGameMode>("ai");
   const [playerColor, setPlayerColor] = useState<Color>("w");
   const [aiThinking, setAiThinking] = useState(false);
 
@@ -450,6 +526,7 @@ export default function App() {
   const [multiplayerId, setMultiplayerId] = useState<string | null>(null);
   const [opponentWantsRematch, setOpponentWantsRematch] = useState(false);
   const [rematchRequested, setRematchRequested] = useState(false);
+  const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
 
   const game = gameRef.current;
   const state = game.getState();
@@ -477,6 +554,18 @@ export default function App() {
   const blackScore = materialScore(state.capturedPieces.w);
   const whiteAdv = Math.max(0, whiteScore - blackScore);
   const blackAdv = Math.max(0, blackScore - whiteScore);
+  const whiteTurnLabel = turnStatusLabel("w", gameMode, playerColor, state.sideToMove, aiThinking);
+  const blackTurnLabel = turnStatusLabel("b", gameMode, playerColor, state.sideToMove, aiThinking);
+  const headerTurnLabel =
+    gameMode === "human"
+      ? "Move now"
+      : state.sideToMove === playerColor
+        ? "Your turn"
+        : gameMode === "ai"
+          ? aiThinking
+            ? "AI thinking"
+            : "AI to move"
+          : "Opponent to move";
 
   const headerBadge = useMemo(() => {
     if (status.result) {
@@ -495,38 +584,25 @@ export default function App() {
       );
     }
 
-    const sideText = state.sideToMove === "w" ? "White's Turn" : "Black's Turn";
-    const isYou =
-      isMultiplayerMode || isAiMode
-        ? state.sideToMove === playerColor
-          ? " (You)"
-          : " (Opponent)"
-        : "";
+    const sideText = state.sideToMove === "w" ? "White to move" : "Black to move";
 
     return (
-      <span
-        className={`badge badge-turn${status.inCheck ? " badge-check" : ""}`}
-        style={{ fontSize: "1rem", padding: "8px 20px" }}
-      >
-        <span
-          className={`pip pip-${state.sideToMove}`}
-          aria-hidden="true"
-          style={{ width: "12px", height: "12px" }}
-        />
+      <span className={`badge badge-turn badge-turn--lg${status.inCheck ? " badge-check" : ""}`}>
+        <span className={`pip pip-${state.sideToMove}`} aria-hidden="true" />
         {sideText}
-        {isYou}
+        {" · "}
+        {headerTurnLabel}
         {status.inCheck ? " · CHECK!" : ""}
       </span>
     );
   }, [
+    headerTurnLabel,
     state.sideToMove,
     status.inCheck,
     status.result,
     isMultiplayerMode,
     multiplayerId,
     searchingMatch,
-    isAiMode,
-    playerColor,
   ]);
 
   const refresh = () => setVersion((v) => v + 1);
@@ -664,6 +740,34 @@ export default function App() {
   useEffect(() => {
     return () => {
       moveSoundRef.current?.pause();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshLobbyStats = async () => {
+      try {
+        const response = await fetch("/api/stats", { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+
+        const stats = (await response.json()) as MultiplayerStats;
+        if (!cancelled) {
+          setMultiplayerStats(stats);
+        }
+      } catch {
+        // Multiplayer stats are best-effort only.
+      }
+    };
+
+    void refreshLobbyStats();
+    const intervalId = window.setInterval(refreshLobbyStats, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -911,6 +1015,7 @@ export default function App() {
             isInCheck={status.inCheck && state.sideToMove === "b"}
             isGameOver={!!status.result}
             isThinking={isAiMode && aiThinking && aiColor === "b"}
+            turnLabel={blackTurnLabel}
           />
           <ChessBoard
             state={state}
@@ -932,11 +1037,13 @@ export default function App() {
             isInCheck={status.inCheck && state.sideToMove === "w"}
             isGameOver={!!status.result}
             isThinking={isAiMode && aiThinking && aiColor === "w"}
+            turnLabel={whiteTurnLabel}
           />
         </div>
 
         {/* Sidebar */}
         <aside className="sidebar">
+          <LobbyStatsCard stats={multiplayerStats} isMultiplayerMode={isMultiplayerMode} />
           <AIControls
             mode={gameMode}
             playerColor={playerColor}
@@ -954,26 +1061,12 @@ export default function App() {
           />
 
           {isMultiplayerMode && status.result && (
-            <div
-              className="card"
-              style={{
-                textAlign: "center",
-                border: "1px solid var(--amber)",
-                display: "flex",
-                flexDirection: "column",
-                gap: "8px",
-              }}
-            >
+            <div className="card card--rematch">
               <p className="card-label">Game Over</p>
-              {opponentWantsRematch && (
-                <p style={{ fontSize: "0.8rem", color: "var(--amber-hi)" }}>
-                  Opponent wants a rematch!
-                </p>
-              )}
+              {opponentWantsRematch && <p className="rematch-note">Opponent wants a rematch!</p>}
               <button
                 type="button"
-                className="btn btn-accent"
-                style={{ width: "100%" }}
+                className="btn btn-accent btn--full"
                 onClick={handleRequestRematch}
                 disabled={rematchRequested}
               >

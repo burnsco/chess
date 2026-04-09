@@ -31,6 +31,17 @@ public class GameHub : Hub
     private static readonly ConcurrentDictionary<string, GameSession> _activeGames = new();
     private static readonly ConcurrentDictionary<string, string> _playerToGameId = new();
 
+    public static LobbyStats GetLobbyStats()
+    {
+        var activeGames = _activeGames.Count;
+        var activePlayers = _activeGames.Values.Sum(session =>
+            (string.IsNullOrEmpty(session.WhitePlayerId) ? 0 : 1) +
+            (string.IsNullOrEmpty(session.BlackPlayerId) ? 0 : 1));
+        var waitingPlayers = _waitingSet.Count;
+
+        return new LobbyStats(activeGames, activePlayers, waitingPlayers);
+    }
+
     
     public async Task RecoverSession(string gameId, string colorStr)
     {
@@ -231,3 +242,5 @@ public class GameHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 }
+
+public record LobbyStats(int ActiveGames, int ActivePlayers, int WaitingPlayers);

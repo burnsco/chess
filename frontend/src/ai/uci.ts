@@ -7,6 +7,15 @@ export interface ParsedUciMove {
   promotion?: PieceType;
 }
 
+export function parseBestMove(output: string): string | null {
+  const match = output.trim().match(/^bestmove\s+(\S+)/);
+  if (!match || match[1] === "(none)") {
+    return null;
+  }
+
+  return match[1];
+}
+
 export function parseUciMove(move: string): ParsedUciMove | null {
   const normalized = move.trim().toLowerCase();
   const match = normalized.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/);
