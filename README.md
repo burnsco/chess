@@ -1,6 +1,6 @@
 # ♟️ React Chess | Play Online with Stockfish AI
 
-A high-performance, browser-based chess game built with modern web technologies: **Vite**, **React**, and **TypeScript**. 
+A high-performance, browser-based chess game built with modern web technologies: **Vite**, **React**, and **TypeScript**.
 
 Play a seamless game of chess with a friend locally or challenge the powerful **Stockfish-powered AI** (web worker). This project features a robust rules engine that handles move generation, legal move validation, special moves (castling, en passant), and draw rules.
 
@@ -29,12 +29,14 @@ Play a seamless game of chess with a friend locally or challenge the powerful **
 ### Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/cburns/chess.git
    cd chess/frontend
    ```
 
 2. Install dependencies:
+
    ```bash
    bun install
    # or
@@ -42,6 +44,7 @@ Play a seamless game of chess with a friend locally or challenge the powerful **
    ```
 
 3. Start the development server:
+
    ```bash
    bun run dev
    ```

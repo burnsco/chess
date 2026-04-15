@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as signalR from "@microsoft/signalr";
 import { AI_DIFFICULTY_SETTINGS, AI_MOVE_DELAY_MS } from "./ai/config";
 import { parseUciMove } from "./ai/uci";
@@ -15,7 +15,7 @@ import type {
   Piece,
   PieceType,
 } from "./engine/types";
-import { PIECE_SYMBOLS, oppositeColor, algebraicToIndex } from "./engine/board";
+import { PIECE_SYMBOLS, oppositeColor } from "./engine/board";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +36,7 @@ interface MultiplayerStats {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const PROMOTION_ORDER: PieceType[] = ["q", "r", "b", "n"];
+const LOBBY_STATS_REFRESH_MS = 15000;
 const MOVE_SOUND_SRC = "/sounds/chess-move.mp3";
 const BACKEND_URL =
   window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
@@ -151,7 +152,7 @@ interface PlayerBarProps {
   turnLabel: string;
 }
 
-function PlayerBar({
+const PlayerBar = memo(function PlayerBar({
   color,
   label,
   capturedByThis,
@@ -194,7 +195,7 @@ function PlayerBar({
       {isThinking && <span className="thinking-badge">Thinking…</span>}
     </div>
   );
-}
+});
 
 interface AIControlsProps {
   mode: ExtendedGameMode;
@@ -205,6 +206,7 @@ interface AIControlsProps {
   aiThinking: boolean;
   aiError: string | null;
   searchingMatch: boolean;
+  multiplayerConnectionMessage: string | null;
   multiplayerId: string | null;
   onModeChange: (mode: ExtendedGameMode) => void;
   onPlayerColorChange: (color: Color) => void;
@@ -213,7 +215,7 @@ interface AIControlsProps {
   onReset: () => void;
 }
 
-function AIControls({
+const AIControls = memo(function AIControls({
   mode,
   playerColor,
   difficulty,
@@ -221,6 +223,7 @@ function AIControls({
   aiThinking,
   aiError,
   searchingMatch,
+  multiplayerConnectionMessage,
   multiplayerId,
   onModeChange,
   onPlayerColorChange,
@@ -232,11 +235,12 @@ function AIControls({
     mode === "human"
       ? "Pass-and-play mode."
       : mode === "multiplayer"
-        ? multiplayerId
-          ? "Connected to opponent."
-          : searchingMatch
-            ? "Searching for opponent..."
-            : "Click 'Find Game' to start."
+        ? multiplayerConnectionMessage ??
+          (multiplayerId
+            ? "Connected to opponent."
+            : searchingMatch
+              ? "Searching for opponent..."
+              : "Click 'Find Game' to start.")
         : aiThinking
           ? "AI thinking..."
           : `AI plays ${colorName(aiColor)}.`;
@@ -344,14 +348,14 @@ function AIControls({
       )}
     </div>
   );
-}
+});
 
 interface LobbyStatsCardProps {
   stats: MultiplayerStats | null;
   isMultiplayerMode: boolean;
 }
 
-function LobbyStatsCard({ stats, isMultiplayerMode }: LobbyStatsCardProps) {
+const LobbyStatsCard = memo(function LobbyStatsCard({ stats, isMultiplayerMode }: LobbyStatsCardProps) {
   return (
     <div
       className={`card card--lobby${isMultiplayerMode ? " card--lobby--active" : ""}`}
@@ -384,7 +388,7 @@ function LobbyStatsCard({ stats, isMultiplayerMode }: LobbyStatsCardProps) {
       </div>
     </div>
   );
-}
+});
 
 interface GameInfoProps {
   state: ChessState;
@@ -394,7 +398,7 @@ interface GameInfoProps {
   onReset: () => void;
 }
 
-function GameInfo({
+const GameInfo = memo(function GameInfo({
   state,
   status,
   claimDrawDisabled = false,
@@ -455,7 +459,7 @@ function GameInfo({
       )}
     </div>
   );
-}
+});
 
 interface PromotionOverlayProps {
   request: PromotionRequest;
@@ -464,7 +468,12 @@ interface PromotionOverlayProps {
   onCancel: () => void;
 }
 
-function PromotionOverlay({ request, sideToMove, onChoose, onCancel }: PromotionOverlayProps) {
+const PromotionOverlay = memo(function PromotionOverlay({
+  request,
+  sideToMove,
+  onChoose,
+  onCancel,
+}: PromotionOverlayProps) {
   return (
     <div className="modal-overlay" onClick={onCancel} role="presentation">
       <div
@@ -500,7 +509,7 @@ function PromotionOverlay({ request, sideToMove, onChoose, onCancel }: Promotion
       </div>
     </div>
   );
-}
+});
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -509,8 +518,10 @@ export default function App() {
   const aiRequestTokenRef = useRef(0);
   const moveSoundRef = useRef<HTMLAudioElement | null>(null);
   const hubConnectionRef = useRef<signalR.HubConnection | null>(null);
+  const multiplayerIdRef = useRef<string | null>(null);
+  const playerColorRef = useRef<Color>("w");
 
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   const [gameSession, setGameSession] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [dragSource, setDragSource] = useState<number | null>(null);
@@ -524,16 +535,30 @@ export default function App() {
 
   const [searchingMatch, setSearchingMatch] = useState(false);
   const [multiplayerId, setMultiplayerId] = useState<string | null>(null);
+  const [multiplayerConnectionMessage, setMultiplayerConnectionMessage] = useState<string | null>(
+    null,
+  );
   const [opponentWantsRematch, setOpponentWantsRematch] = useState(false);
   const [rematchRequested, setRematchRequested] = useState(false);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
 
+  useEffect(() => {
+    multiplayerIdRef.current = multiplayerId;
+  }, [multiplayerId]);
+
+  useEffect(() => {
+    playerColorRef.current = playerColor;
+  }, [playerColor]);
+
   const game = gameRef.current;
-  const state = game.getState();
-  const status = game.getStatus();
-  const currentFen = game.toFen();
-  const moveHistory = game.getMoveHistory();
-  const selectableMoves = selectedSquare === null ? [] : game.getLegalMovesFrom(selectedSquare);
+  const state = useMemo(() => game.getState(), [gameSession, version]);
+  const status = useMemo(() => game.getStatus(), [gameSession, version]);
+  const currentFen = useMemo(() => game.toFen(), [gameSession, version]);
+  const moveHistory = useMemo(() => game.getMoveHistory(), [gameSession, version]);
+  const selectableMoves = useMemo(
+    () => (selectedSquare === null ? [] : game.getLegalMovesFrom(selectedSquare)),
+    [game, gameSession, selectedSquare, version],
+  );
   const aiColor = oppositeColor(playerColor);
   const isAiMode = gameMode === "ai";
   const isMultiplayerMode = gameMode === "multiplayer";
@@ -678,14 +703,19 @@ export default function App() {
 
     connection.on("WaitingForOpponent", () => {
       setSearchingMatch(true);
+      setMultiplayerConnectionMessage(null);
     });
 
     connection.on("GameStarted", (gameId: string, assignedColor: string) => {
       setMultiplayerId(gameId);
+      multiplayerIdRef.current = gameId;
       setSearchingMatch(false);
+      setMultiplayerConnectionMessage(null);
       setOpponentWantsRematch(false);
       setRematchRequested(false);
-      setPlayerColor(assignedColor === "white" ? "w" : "b");
+      const nextColor = assignedColor === "white" ? "w" : "b";
+      setPlayerColor(nextColor);
+      playerColorRef.current = nextColor;
       aiRequestTokenRef.current += 1;
       setAiThinking(false);
       gameRef.current.reset();
@@ -705,15 +735,21 @@ export default function App() {
     });
 
     connection.on("ReceiveMove", (moveStr: string) => {
-      const from = moveStr.slice(0, 2);
-      const to = moveStr.slice(2, 4);
-      const prom = moveStr[4] as PieceType | undefined;
+      const parsedMove = parseUciMove(moveStr);
+      if (!parsedMove) {
+        return;
+      }
 
-      const fromIdx = algebraicToIndex(from);
-      const toIdx = algebraicToIndex(to);
+      const legalMoves = game
+        .getLegalMovesFrom(parsedMove.from)
+        .filter((candidate) => candidate.to === parsedMove.to);
+      const matchingMove = legalMoves.find((candidate) => candidate.promotion === parsedMove.promotion);
+      if (!matchingMove) {
+        return;
+      }
 
       // Pass false so finalizeMove doesn't echo the move back to the hub
-      if (game.move(fromIdx, toIdx, prom)) {
+      if (game.move(parsedMove.from, parsedMove.to, parsedMove.promotion)) {
         finalizeMove(false);
       }
     });
@@ -722,6 +758,47 @@ export default function App() {
       alert("Opponent disconnected.");
       setMultiplayerId(null);
       setGameMode("human");
+    });
+
+    connection.onreconnecting(() => {
+      setSearchingMatch(false);
+      setMultiplayerConnectionMessage("Connection lost. Reconnecting...");
+      setRematchRequested(false);
+    });
+
+    connection.onreconnected(async () => {
+      if (gameMode !== "multiplayer") {
+        return;
+      }
+
+      const activeGameId = multiplayerIdRef.current;
+      const activeColor = playerColorRef.current;
+
+      if (activeGameId) {
+        try {
+          await connection.invoke(
+            "RecoverSession",
+            activeGameId,
+            activeColor === "w" ? "white" : "black",
+          );
+          setMultiplayerConnectionMessage("Reconnected to your game.");
+        } catch (error) {
+          console.error("Failed to recover multiplayer session:", error);
+          setMultiplayerConnectionMessage("Reconnected, but session recovery failed.");
+        }
+      } else {
+        setMultiplayerConnectionMessage("Reconnected.");
+      }
+
+      setSearchingMatch(false);
+    });
+
+    connection.onclose(() => {
+      hubConnectionRef.current = null;
+      multiplayerIdRef.current = null;
+      setSearchingMatch(false);
+      setMultiplayerId(null);
+      setMultiplayerConnectionMessage("Connection closed. Please start a new game.");
     });
 
     connection
@@ -763,7 +840,7 @@ export default function App() {
     };
 
     void refreshLobbyStats();
-    const intervalId = window.setInterval(refreshLobbyStats, 15000);
+    const intervalId = window.setInterval(refreshLobbyStats, LOBBY_STATS_REFRESH_MS);
 
     return () => {
       cancelled = true;
@@ -906,6 +983,7 @@ export default function App() {
   const handleReset = () => {
     aiRequestTokenRef.current += 1;
     setAiThinking(false);
+    setMultiplayerConnectionMessage(null);
     game.reset();
     setGameSession((session) => session + 1);
     clearSelection();
@@ -947,8 +1025,12 @@ export default function App() {
   };
 
   const handleFindGame = () => {
-    if (hubConnectionRef.current) {
+    if (hubConnectionRef.current && hubConnectionRef.current.state === signalR.HubConnectionState.Connected) {
+      setSearchingMatch(true);
+      setMultiplayerConnectionMessage(null);
       hubConnectionRef.current.invoke("FindGame");
+    } else {
+      setMultiplayerConnectionMessage("Connection is not ready yet.");
     }
   };
 
@@ -962,10 +1044,13 @@ export default function App() {
   const handleModeChange = (newMode: ExtendedGameMode) => {
     if (newMode === "multiplayer") {
       setPlayerColor("w"); // Default until game starts
+      playerColorRef.current = "w";
     }
     setGameMode(newMode);
     setMultiplayerId(null);
+    multiplayerIdRef.current = null;
     setSearchingMatch(false);
+    setMultiplayerConnectionMessage(null);
     setRematchRequested(false);
     setOpponentWantsRematch(false);
     handleReset();
@@ -1052,6 +1137,7 @@ export default function App() {
             aiThinking={aiThinking}
             aiError={aiError}
             searchingMatch={searchingMatch}
+            multiplayerConnectionMessage={multiplayerConnectionMessage}
             multiplayerId={multiplayerId}
             onModeChange={handleModeChange}
             onPlayerColorChange={setPlayerColor}

@@ -24,6 +24,13 @@ public class GameSession
 
 public class GameHub : Hub
 {
+    private readonly ILogger<GameHub> _logger;
+
+    public GameHub(ILogger<GameHub>? logger = null)
+    {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GameHub>.Instance;
+    }
+
     // Track waiting players as a set for O(1) membership checks and safe removal on disconnect.
     // The queue provides FIFO ordering; the set provides fast existence checks and atomic add.
     private static readonly ConcurrentDictionary<string, byte> _waitingSet = new();
@@ -71,6 +78,7 @@ public class GameHub : Hub
 
         _playerToGameId[playerId] = gameId;
         await Groups.AddToGroupAsync(playerId, gameId);
+        _logger.LogInformation("Player {PlayerId} recovered session {GameId} as {Color}", playerId, gameId, colorStr);
     }
 
     public async Task FindGame()
@@ -109,6 +117,8 @@ public class GameHub : Hub
             await Groups.AddToGroupAsync(playerId, gameId);
             await Groups.AddToGroupAsync(opponentId, gameId);
 
+            _logger.LogInformation("Created game {GameId} between {WhitePlayerId} (white) and {BlackPlayerId} (black)", gameId, session.WhitePlayerId, session.BlackPlayerId);
+
             await Clients.Client(session.WhitePlayerId).SendAsync("GameStarted", gameId, "white");
             await Clients.Client(session.BlackPlayerId).SendAsync("GameStarted", gameId, "black");
             return;
@@ -116,6 +126,7 @@ public class GameHub : Hub
 
         // No live opponent found — enqueue and wait
         _waitingQueue.Enqueue(playerId);
+        _logger.LogInformation("Player {PlayerId} is waiting for a game", playerId);
         await Clients.Caller.SendAsync("WaitingForOpponent");
     }
 
@@ -153,6 +164,7 @@ public class GameHub : Hub
             {
                 var winner = session.Game.IsCheckmated(Player.Black) ? "white" :
                              session.Game.IsCheckmated(Player.White) ? "black" : "draw";
+                _logger.LogInformation("Game {GameId} ended with winner {Winner}", gameId, winner);
                 await Clients.Group(gameId).SendAsync("GameOver", winner);
             }
         }
@@ -177,6 +189,8 @@ public class GameHub : Hub
             session.WhitePlayerId = session.BlackPlayerId;
             session.BlackPlayerId = oldWhite;
             session.Reset();
+
+            _logger.LogInformation("Game {GameId} rematch started", gameId);
 
             await Clients.Client(session.WhitePlayerId).SendAsync("GameStarted", gameId, "white");
             await Clients.Client(session.BlackPlayerId).SendAsync("GameStarted", gameId, "black");
@@ -212,6 +226,7 @@ public class GameHub : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var playerId = Context.ConnectionId;
+        _logger.LogInformation("Player {PlayerId} disconnected", playerId);
 
         // Remove from the waiting set. If this player was in the queue but hasn't been
         // dequeued yet, the next FindGame call will see the set entry is gone and skip them.
@@ -230,11 +245,13 @@ public class GameHub : Hub
                 if (string.IsNullOrEmpty(session.WhitePlayerId) && string.IsNullOrEmpty(session.BlackPlayerId))
                 {
                     _activeGames.TryRemove(gameId, out _);
+                    _logger.LogInformation("Game {GameId} removed after all players disconnected", gameId);
                 }
                 else
                 {
                     // Notify the other player that their opponent has disconnected.
                     await Clients.OthersInGroup(gameId).SendAsync("OpponentDisconnected");
+                    _logger.LogInformation("Game {GameId} opponent disconnected", gameId);
                 }
             }
         }

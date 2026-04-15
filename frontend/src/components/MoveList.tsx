@@ -1,11 +1,11 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { MoveRecord } from "../engine/types";
 
 interface MoveListProps {
   moves: MoveRecord[];
 }
 
-export function MoveList({ moves }: MoveListProps) {
+function MoveListImpl({ moves }: MoveListProps) {
   const listRef = useRef<HTMLOListElement>(null);
 
   // Auto-scroll to the latest move
@@ -43,3 +43,5 @@ export function MoveList({ moves }: MoveListProps) {
     </div>
   );
 }
+
+export const MoveList = memo(MoveListImpl);

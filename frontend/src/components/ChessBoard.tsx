@@ -1,4 +1,5 @@
-import { FILES, PIECE_SYMBOLS, getFile, getRankIndex, indexToAlgebraic } from "../engine/board";
+import { memo, useMemo } from "react";
+import { FILES, PIECE_SYMBOLS, getFile, getRankIndex, indexToAlgebraic, isOnBoard } from "../engine/board";
 import type { ChessState, Color, Move, Piece } from "../engine/types";
 
 interface ChessBoardProps {
@@ -17,7 +18,38 @@ function isMovablePiece(piece: Piece | null, state: ChessState): boolean {
   return Boolean(piece && piece.color === state.sideToMove);
 }
 
-export function ChessBoard({
+function getKeyboardTarget(
+  square: number,
+  key: string,
+  perspective: Color,
+): number | null {
+  const file = getFile(square);
+  const rank = getRankIndex(square);
+  const inverted = perspective === "b";
+
+  const deltas: Record<string, [number, number]> = {
+    ArrowUp: [0, inverted ? 1 : -1],
+    ArrowDown: [0, inverted ? -1 : 1],
+    ArrowLeft: [inverted ? 1 : -1, 0],
+    ArrowRight: [inverted ? -1 : 1, 0],
+  };
+
+  const delta = deltas[key];
+  if (!delta) {
+    return null;
+  }
+
+  const nextFile = file + delta[0];
+  const nextRank = rank + delta[1];
+  if (nextFile < 0 || nextFile > 7 || nextRank < 0 || nextRank > 7) {
+    return null;
+  }
+
+  const nextSquare = nextRank * 8 + nextFile;
+  return isOnBoard(nextSquare) ? nextSquare : null;
+}
+
+function ChessBoardImpl({
   state,
   selectedSquare,
   legalMoves,
@@ -28,25 +60,38 @@ export function ChessBoard({
   onPieceDragStart,
   onPieceDrop,
 }: ChessBoardProps) {
-  const legalTargetMap = new Map<number, Move[]>();
-  for (const move of legalMoves) {
-    const existing = legalTargetMap.get(move.to) ?? [];
-    existing.push(move);
-    legalTargetMap.set(move.to, existing);
-  }
+  const legalTargetMap = useMemo(() => {
+    const map = new Map<number, Move[]>();
+    for (const move of legalMoves) {
+      const existing = map.get(move.to) ?? [];
+      existing.push(move);
+      map.set(move.to, existing);
+    }
+    return map;
+  }, [legalMoves]);
 
   // Find the king in check so we can highlight it
-  const checkSquare = inCheck
-    ? state.board.findIndex((p) => p !== null && p.type === "k" && p.color === state.sideToMove)
-    : -1;
-  const displaySquares =
-    perspective === "w"
+  const checkSquare = useMemo(() => {
+    if (!inCheck) {
+      return -1;
+    }
+    return state.board.findIndex((p) => p !== null && p.type === "k" && p.color === state.sideToMove);
+  }, [inCheck, state.board, state.sideToMove]);
+
+  const displaySquares = useMemo(() => {
+    return perspective === "w"
       ? Array.from({ length: 64 }, (_, square) => square)
       : Array.from({ length: 64 }, (_, square) => 63 - square);
+  }, [perspective]);
+
+  const boardHelpId = "chess-board-help";
 
   return (
     <div className={`board-shell${interactionDisabled ? " board-shell--locked" : ""}`}>
-      <div className="board" role="grid" aria-label="Chess board">
+      <p id={boardHelpId} className="visually-hidden">
+        Use arrow keys to move between squares. Press Enter or Space to select a square.
+      </p>
+      <div className="board" role="grid" aria-label="Chess board" aria-describedby={boardHelpId}>
         {displaySquares.map((square, displayIndex) => {
           const piece = state.board[square];
           const isLight = (getFile(square) + getRankIndex(square)) % 2 === 1;
@@ -80,7 +125,20 @@ export function ChessBoard({
               type="button"
               className={squareCls}
               disabled={interactionDisabled}
+              data-square={square}
               onClick={() => onSquareClick(square)}
+              onKeyDown={(e) => {
+                const nextSquare = getKeyboardTarget(square, e.key, perspective);
+                if (nextSquare === null) {
+                  return;
+                }
+
+                e.preventDefault();
+                const nextButton = e.currentTarget
+                  .closest(".board")
+                  ?.querySelector<HTMLButtonElement>(`button[data-square="${nextSquare}"]`);
+                nextButton?.focus();
+              }}
               onDragOver={(e) => {
                 if (!interactionDisabled && selectedSquare !== null) e.preventDefault();
               }}
@@ -124,3 +182,5 @@ export function ChessBoard({
     </div>
   );
 }
+
+export const ChessBoard = memo(ChessBoardImpl);

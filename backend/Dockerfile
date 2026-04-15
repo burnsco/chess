@@ -28,7 +28,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS production
 WORKDIR /app
 
 # Install Stockfish for production
-RUN apt-get update && apt-get install -y stockfish && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y stockfish curl && rm -rf /var/lib/apt/lists/*
 # Symlink to a standard path
 RUN ln -s /usr/games/stockfish /usr/local/bin/stockfish
 

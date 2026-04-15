@@ -23,9 +23,15 @@ export function parseUciMove(move: string): ParsedUciMove | null {
     return null;
   }
 
+  const promotion = match[3];
+  const parsedPromotion =
+    promotion === "q" || promotion === "r" || promotion === "b" || promotion === "n"
+      ? promotion
+      : undefined;
+
   return {
     from: algebraicToIndex(match[1]),
     to: algebraicToIndex(match[2]),
-    promotion: match[3] as PieceType | undefined,
+    promotion: parsedPromotion,
   };
 }
