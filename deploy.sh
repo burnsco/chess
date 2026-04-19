@@ -1,35 +1,37 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# --- Config ---
-REMOTE_HOST="192.168.2.124"
-REMOTE_PORT="2222"
-REMOTE_USER="cburns"
-REMOTE_DOCKER_PATH="/home/cburns/docker/chess"
+REMOTE_HOST="${REMOTE_HOST:-192.168.2.124}"
+REMOTE_PORT="${REMOTE_PORT:-2222}"
+REMOTE_USER="${REMOTE_USER:-cburns}"
+REMOTE_DOCKER_PATH="${REMOTE_DOCKER_PATH:-/home/cburns/docker/chess}"
+REMOTE_ARCHIVE_PATH="${REMOTE_ARCHIVE_PATH:-/tmp/chess-images.tar}"
 
-FRONTEND_IMAGE="ghcr.io/burnsco/chess-frontend:latest"
-BACKEND_IMAGE="ghcr.io/burnsco/chess-backend:latest"
+FRONTEND_IMAGE="${FRONTEND_IMAGE:-ghcr.io/burnsco/chess-frontend:latest}"
+BACKEND_IMAGE="${BACKEND_IMAGE:-ghcr.io/burnsco/chess-backend:latest}"
 
-echo "🚀 Starting local build for Chess..."
+ARCHIVE_PATH="$(mktemp -t chess-images.XXXXXX.tar)"
+trap 'rm -f "$ARCHIVE_PATH"' EXIT
 
-# --- Build Frontend ---
+echo "🚀 Deploying Chess..."
+
 echo "📦 Building Frontend..."
 docker build --network=host --target production -t "$FRONTEND_IMAGE" ./frontend
 
-# --- Build Backend ---
 echo "📦 Building Backend..."
 docker build --network=host --target production -t "$BACKEND_IMAGE" ./backend
 
-# --- Push to GHCR (Optional but recommended for consistency) ---
-echo "⬆️  Pushing images to GHCR..."
-docker push "$FRONTEND_IMAGE"
-docker push "$BACKEND_IMAGE"
+echo "📦 Packaging images for transfer..."
+docker save -o "$ARCHIVE_PATH" "$FRONTEND_IMAGE" "$BACKEND_IMAGE"
 
-# --- Deploy to Server ---
-echo "🚢 Deploying to $REMOTE_HOST..."
+echo "⬆️  Copying images to mordor..."
+scp -P "$REMOTE_PORT" "$ARCHIVE_PATH" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_ARCHIVE_PATH"
 
-# 1. Update the local compose.yml to the remote path if needed, or just trigger pull
-# Since the server already has compose.yml, we just tell it to pull and restart.
-ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "cd $REMOTE_DOCKER_PATH && docker compose pull && docker compose up -d"
+echo "🚢 Loading images and restarting the server stack..."
+remote_cmd=$(printf 'set -euo pipefail; docker load -i %q >/dev/null; rm -f %q; cd %q && docker compose up -d --no-build' \
+  "$REMOTE_ARCHIVE_PATH" \
+  "$REMOTE_ARCHIVE_PATH" \
+  "$REMOTE_DOCKER_PATH")
+ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "bash -lc $(printf '%q' "$remote_cmd")"
 
 echo "✅ Deployment complete!"
